@@ -29,3 +29,5 @@ coverage
 # Debug
 npm-debug.log*
 pnpm-debug.log*
+
+/generated/prisma
