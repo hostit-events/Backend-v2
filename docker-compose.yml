@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: hostit-postgres
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_USER: hostit
+      POSTGRES_PASSWORD: hostit_secret
+      POSTGRES_DB: hostit_v2
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: hostit-redis
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:

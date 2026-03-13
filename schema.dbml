@@ -1,0 +1,285 @@
+// HostIT v2 Backend — Database Schema
+// Paste this into https://dbdiagram.io to visualize
+
+// ============ ENUMS ============
+
+Enum UserRole {
+  BUYER
+  ORGANIZER
+  ADMIN
+}
+
+Enum EventStatus {
+  DRAFT
+  PUBLISHED
+  CANCELLED
+  COMPLETED
+}
+
+Enum EventCategory {
+  CONCERT
+  CONFERENCE
+  WORKSHOP
+  PARTY
+  CORPORATE
+  SPORTS
+  OTHER
+}
+
+Enum TicketStatus {
+  PENDING
+  CONFIRMED
+  USED
+  CANCELLED
+  REFUNDED
+}
+
+Enum DeliveryChannel {
+  EMAIL
+  SMS
+  WHATSAPP
+}
+
+Enum TransactionStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+Enum PaymentProvider {
+  PAYSTACK
+  MONNIFY
+  BLOCKRADAR
+  CRYPTO
+}
+
+Enum PayoutStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+Enum BlockchainTxType {
+  MINT
+  CREATE_EVENT
+  CHECKIN
+  WITHDRAW
+  SET_FEES
+}
+
+Enum BlockchainTxStatus {
+  PENDING
+  SUBMITTED
+  CONFIRMED
+  FAILED
+}
+
+Enum NotificationChannel {
+  EMAIL
+  SMS
+  WHATSAPP
+}
+
+Enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+Enum KycTier {
+  NONE
+  BASIC
+  ENHANCED
+}
+
+Enum KycStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+// ============ MODELS ============
+
+Table users {
+  id uuid [pk, default: `uuid_generate_v4()`]
+  email varchar [unique, not null]
+  password varchar [not null, note: 'bcrypt hashed (10 rounds)']
+  first_name varchar [not null]
+  last_name varchar [not null]
+  phone varchar [note: '+234XXXXXXXXXX format']
+  role UserRole [not null, default: 'BUYER']
+  wallet_address varchar [note: 'Blockradar blockchain address']
+  blockradar_address_id varchar [note: 'Blockradar child address ID']
+  password_reset_token varchar
+  password_reset_expires timestamp
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+}
+
+Table organizer_profiles {
+  id uuid [pk, default: `uuid_generate_v4()`]
+  user_id uuid [unique, not null, ref: - users.id]
+  bvn varchar [note: 'encrypted at rest']
+  bvn_verified boolean [not null, default: false]
+  bank_name varchar
+  bank_code varchar [note: 'Nigerian bank code']
+  account_number varchar [note: '10-digit NUBAN']
+  account_name varchar [note: 'resolved from Paystack']
+  bank_verified boolean [not null, default: false]
+  kyc_tier KycTier [not null, default: 'NONE']
+  kyc_status KycStatus [not null, default: 'PENDING']
+  government_id_url varchar [note: 'Tier 2 — uploaded government ID']
+  selfie_url varchar [note: 'Tier 2 — liveness selfie']
+  business_name varchar
+  business_address varchar
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+}
+
+Table events {
+  id uuid [pk, default: `uuid_generate_v4()`]
+  organizer_id uuid [not null, ref: > users.id]
+  name varchar(100) [not null]
+  slug varchar [unique, not null, note: 'auto-generated from name']
+  description text [not null, note: 'rich text, max 1000 chars']
+  venue varchar(200) [not null]
+  location varchar [not null, note: 'city/state']
+  category EventCategory [not null]
+  cover_image varchar [note: 'URL to uploaded image']
+  start_time timestamp [not null, note: 'must be > now + 24h']
+  end_time timestamp [not null, note: 'must be >= start_time + 1 day']
+  purchase_start_time timestamp [not null, note: 'must be <= start_time - 1 day']
+  status EventStatus [not null, default: 'DRAFT']
+  on_chain_ticket_id bigint [note: 'uint64 from smart contract']
+  is_free boolean [not null, default: false]
+  is_refundable boolean [not null, default: false]
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+
+  indexes {
+    organizer_id
+  }
+}
+
+Table ticket_types {
+  id uuid [pk, default: `uuid_generate_v4()`]
+  event_id uuid [not null, ref: > events.id]
+  name varchar [not null, note: '"General", "VIP", "VVIP"']
+  description text
+  price decimal [not null, note: 'NGN. 0=free, otherwise min 500, max 500,000']
+  quantity int [not null, note: '1 - 50,000']
+  max_per_user int [not null, default: 5]
+  sold_count int [not null, default: 0]
+  sales_start_date timestamp
+  sales_end_date timestamp
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+
+  indexes {
+    event_id
+  }
+}
+
+Table tickets {
+  id uuid [pk, default: `uuid_generate_v4()`]
+  ticket_type_id uuid [not null, ref: > ticket_types.id]
+  event_id uuid [not null, ref: > events.id]
+  buyer_id uuid [ref: > users.id, note: 'nullable for guest checkout']
+  buyer_email varchar [not null]
+  buyer_name varchar [not null]
+  buyer_phone varchar [note: '+234 format']
+  reference varchar [unique, not null, note: 'format: HOSTIT_TKT_XXXXXX']
+  qr_code varchar [note: 'URL or encoded QR data']
+  token_id int [note: 'NFT token ID from on-chain mint']
+  status TicketStatus [not null, default: 'PENDING']
+  delivery_channel DeliveryChannel [not null]
+  checked_in_at timestamp
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+
+  indexes {
+    (event_id, buyer_email) [name: 'idx_ticket_event_buyer']
+    event_id
+  }
+}
+
+Table transactions {
+  id uuid [pk, default: `uuid_generate_v4()`]
+  ticket_id uuid [ref: > tickets.id]
+  event_id uuid [not null, ref: > events.id]
+  buyer_email varchar [not null]
+  amount decimal [not null, note: 'in NGN']
+  currency varchar [not null, default: 'NGN']
+  provider PaymentProvider [not null]
+  provider_reference varchar [note: "provider's transaction reference"]
+  status TransactionStatus [not null, default: 'PENDING']
+  metadata json [note: 'provider-specific data']
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+
+  indexes {
+    provider_reference
+    event_id
+  }
+}
+
+Table payouts {
+  id uuid [pk, default: `uuid_generate_v4()`]
+  organizer_id uuid [not null, ref: > users.id]
+  event_id uuid [not null, ref: > events.id]
+  amount decimal [not null, note: 'in NGN']
+  currency varchar [not null, default: 'NGN']
+  provider PaymentProvider [not null]
+  provider_reference varchar
+  status PayoutStatus [not null, default: 'PENDING']
+  bank_name varchar
+  bank_code varchar
+  account_number varchar
+  account_name varchar
+  scheduled_date timestamp [not null, note: 'event end + 3 days (refund period)']
+  processed_at timestamp
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+
+  indexes {
+    organizer_id
+    event_id
+  }
+}
+
+Table blockchain_transactions {
+  id uuid [pk, default: `uuid_generate_v4()`]
+  ticket_id uuid [ref: > tickets.id]
+  event_id uuid [ref: > events.id]
+  tx_hash varchar [note: 'null until tx submitted to chain']
+  type BlockchainTxType [not null]
+  status BlockchainTxStatus [not null, default: 'PENDING']
+  retries int [not null, default: 0, note: 'max 3']
+  error text [note: 'failure reason for debugging']
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+
+  indexes {
+    tx_hash
+    event_id
+  }
+}
+
+Table notifications {
+  id uuid [pk, default: `uuid_generate_v4()`]
+  user_id uuid [ref: > users.id]
+  ticket_id uuid [ref: > tickets.id]
+  channel NotificationChannel [not null]
+  type varchar [not null, note: '"ticket_confirmation", "payout_complete", "password_reset"']
+  status NotificationStatus [not null, default: 'PENDING']
+  metadata json [note: 'template variables, recipient info']
+  sent_at timestamp
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+
+  indexes {
+    user_id
+    ticket_id
+  }
+}
