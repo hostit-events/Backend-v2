@@ -14,6 +14,7 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @Injectable()
 export class AuthService {
@@ -142,6 +143,58 @@ export class AuthService {
     });
 
     return { message: 'Password has been reset successfully.' };
+  }
+
+  async getProfile(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { organizerProfile: true },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    const { password, passwordResetToken, passwordResetExpires, ...userData } = user;
+
+    let organizerProfile: Record<string, unknown> | null = null;
+    if (userData.organizerProfile) {
+      const { bvn, id, userId: opUserId, ...profileData } = userData.organizerProfile;
+      organizerProfile = {
+        ...profileData,
+        accountNumber: profileData.accountNumber
+          ? this.maskAccountNumber(profileData.accountNumber)
+          : null,
+      };
+    }
+
+    return {
+      ...userData,
+      organizerProfile,
+    };
+  }
+
+  async updateProfile(userId: string, dto: UpdateProfileDto) {
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(dto.firstName && { firstName: dto.firstName }),
+        ...(dto.lastName && { lastName: dto.lastName }),
+        ...(dto.phone !== undefined && { phone: dto.phone }),
+      },
+    });
+
+    const { password, passwordResetToken, passwordResetExpires, ...result } = user;
+    return result;
+  }
+
+  private maskAccountNumber(accountNumber: string): string {
+    if (accountNumber.length <= 6) return '***';
+    return (
+      accountNumber.slice(0, 3) +
+      '****' +
+      accountNumber.slice(-3)
+    );
   }
 
   private generateToken(userId: string, email: string, role: string): string {
