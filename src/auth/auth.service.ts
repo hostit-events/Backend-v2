@@ -1,12 +1,14 @@
 import {
   Injectable,
   ConflictException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
+import { LoginDto } from './dto/login.dto';
 
 @Injectable()
 export class AuthService {
@@ -39,6 +41,30 @@ export class AuthService {
     });
 
     // TODO: Queue Blockradar wallet creation (Phase 5)
+
+    const accessToken = this.generateToken(user.id, user.email, user.role);
+    const { password, passwordResetToken, passwordResetExpires, ...userWithoutPassword } = user;
+
+    return {
+      accessToken,
+      user: userWithoutPassword,
+    };
+  }
+
+  async login(dto: LoginDto) {
+    const user = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    const isPasswordValid = await bcrypt.compare(dto.password, user.password);
+
+    if (!isPasswordValid) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
 
     const accessToken = this.generateToken(user.id, user.email, user.role);
     const { password, passwordResetToken, passwordResetExpires, ...userWithoutPassword } = user;
