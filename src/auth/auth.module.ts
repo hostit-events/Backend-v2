@@ -14,7 +14,10 @@ import { AuthController } from './auth.controller';
       useFactory: (configService: ConfigService) => ({
         secret: configService.getOrThrow<string>('auth.jwtSecret'),
         signOptions: {
-          expiresIn: configService.get<string>('auth.jwtExpiration', '24h') as any,
+          expiresIn: configService.get<string>(
+            'auth.jwtExpiration',
+            '24h',
+          ) as any,
         },
       }),
     }),

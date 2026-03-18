@@ -29,9 +29,7 @@ export const envValidationSchema = Joi.object({
   MONNIFY_API_KEY: Joi.string().required(),
   MONNIFY_SECRET_KEY: Joi.string().required(),
   MONNIFY_CONTRACT_CODE: Joi.string().required(),
-  MONNIFY_BASE_URL: Joi.string()
-    .uri()
-    .default('https://sandbox.monnify.com'),
+  MONNIFY_BASE_URL: Joi.string().uri().default('https://sandbox.monnify.com'),
 
   // Blockradar
   BLOCKRADAR_API_KEY: Joi.string().required(),
