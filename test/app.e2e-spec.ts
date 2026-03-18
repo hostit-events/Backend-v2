@@ -29,8 +29,6 @@ describe('App (e2e)', () => {
   });
 
   it('/api/health (GET) should be publicly accessible', () => {
-    return request(app.getHttpServer())
-      .get('/api/health')
-      .expect(200);
+    return request(app.getHttpServer()).get('/api/health').expect(200);
   });
 });
