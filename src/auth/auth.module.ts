@@ -5,9 +5,11 @@ import { ConfigService } from '@nestjs/config';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
+import { PaystackModule } from '../paystack/paystack.module';
 
 @Module({
   imports: [
+    PaystackModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       inject: [ConfigService],

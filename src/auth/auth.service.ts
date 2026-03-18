@@ -15,6 +15,9 @@ import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { BecomeOrganizerDto } from './dto/become-organizer.dto';
+import { PaystackService } from '../paystack/paystack.service';
+import { UserRole } from '@prisma/client';
 
 @Injectable()
 export class AuthService {
@@ -24,6 +27,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly paystackService: PaystackService,
   ) {}
 
   async register(dto: RegisterDto) {
@@ -217,6 +221,83 @@ export class AuthService {
       ...result
     } = user;
     return result;
+  }
+
+  async becomeOrganizer(userId: string, dto: BecomeOrganizerDto) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { organizerProfile: true },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    if (user.role === UserRole.ORGANIZER) {
+      throw new ConflictException('User is already an organizer');
+    }
+
+    if (user.organizerProfile) {
+      throw new ConflictException('Organizer profile already exists');
+    }
+
+    // Verify BVN via Paystack
+    let bvnData: { bvn: string; firstName: string; lastName: string };
+    try {
+      bvnData = await this.paystackService.resolveBvn(dto.bvn);
+    } catch {
+      throw new BadRequestException('BVN verification failed');
+    }
+
+    // Verify bank account via Paystack
+    let bankData: { accountNumber: string; accountName: string };
+    try {
+      bankData = await this.paystackService.resolveBankAccount(
+        dto.accountNumber,
+        dto.bankCode,
+      );
+    } catch {
+      throw new BadRequestException('Bank account verification failed');
+    }
+
+    // Create organizer profile and upgrade role in a transaction
+    const [_updatedUser, organizerProfile] = await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: userId },
+        data: { role: UserRole.ORGANIZER },
+      }),
+      this.prisma.organizerProfile.create({
+        data: {
+          userId,
+          bvn: dto.bvn,
+          bvnVerified: true,
+          bankCode: dto.bankCode,
+          accountNumber: bankData.accountNumber,
+          accountName: bankData.accountName,
+          bankName: bvnData.firstName, // Will be replaced with actual bank name lookup
+          bankVerified: true,
+          kycTier: 'BASIC',
+          kycStatus: 'VERIFIED',
+        },
+      }),
+    ]);
+
+    this.logger.log(`User ${userId} upgraded to ORGANIZER`);
+
+    const {
+      bvn: _bvn,
+      id: _id,
+      userId: _opUserId,
+      ...profileData
+    } = organizerProfile;
+
+    return {
+      message: 'Successfully upgraded to organizer',
+      organizerProfile: {
+        ...profileData,
+        accountNumber: this.maskAccountNumber(profileData.accountNumber!),
+      },
+    };
   }
 
   private maskAccountNumber(accountNumber: string): string {

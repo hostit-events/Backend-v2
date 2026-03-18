@@ -16,6 +16,7 @@ import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { BecomeOrganizerDto } from './dto/become-organizer.dto';
 
 @ApiTags('Auth')
 @Controller('auth')
@@ -69,5 +70,18 @@ export class AuthController {
     @Body() dto: UpdateProfileDto,
   ) {
     return this.authService.updateProfile(userId, dto);
+  }
+
+  @Post('become-organizer')
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Upgrade to organizer with BVN and bank verification',
+  })
+  becomeOrganizer(
+    @CurrentUser('id') userId: string,
+    @Body() dto: BecomeOrganizerDto,
+  ) {
+    return this.authService.becomeOrganizer(userId, dto);
   }
 }
