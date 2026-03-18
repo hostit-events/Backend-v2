@@ -35,7 +35,10 @@ export class AuthService {
       throw new ConflictException('Email already registered');
     }
 
-    const bcryptRounds = this.configService.get<number>('auth.bcryptRounds', 10);
+    const bcryptRounds = this.configService.get<number>(
+      'auth.bcryptRounds',
+      10,
+    );
     const hashedPassword = await bcrypt.hash(dto.password, bcryptRounds);
 
     const user = await this.prisma.user.create({
@@ -51,7 +54,12 @@ export class AuthService {
     // TODO: Queue Blockradar wallet creation (Phase 5)
 
     const accessToken = this.generateToken(user.id, user.email, user.role);
-    const { password, passwordResetToken, passwordResetExpires, ...userWithoutPassword } = user;
+    const {
+      password: _pw,
+      passwordResetToken: _prt,
+      passwordResetExpires: _pre,
+      ...userWithoutPassword
+    } = user;
 
     return {
       accessToken,
@@ -75,7 +83,12 @@ export class AuthService {
     }
 
     const accessToken = this.generateToken(user.id, user.email, user.role);
-    const { password, passwordResetToken, passwordResetExpires, ...userWithoutPassword } = user;
+    const {
+      password: _pw,
+      passwordResetToken: _prt,
+      passwordResetExpires: _pre,
+      ...userWithoutPassword
+    } = user;
 
     return {
       accessToken,
@@ -130,7 +143,10 @@ export class AuthService {
       throw new BadRequestException('Invalid or expired reset token');
     }
 
-    const bcryptRounds = this.configService.get<number>('auth.bcryptRounds', 10);
+    const bcryptRounds = this.configService.get<number>(
+      'auth.bcryptRounds',
+      10,
+    );
     const hashedPassword = await bcrypt.hash(dto.newPassword, bcryptRounds);
 
     await this.prisma.user.update({
@@ -155,11 +171,21 @@ export class AuthService {
       throw new UnauthorizedException('User not found');
     }
 
-    const { password, passwordResetToken, passwordResetExpires, ...userData } = user;
+    const {
+      password: _pw,
+      passwordResetToken: _prt,
+      passwordResetExpires: _pre,
+      ...userData
+    } = user;
 
     let organizerProfile: Record<string, unknown> | null = null;
     if (userData.organizerProfile) {
-      const { bvn, id, userId: opUserId, ...profileData } = userData.organizerProfile;
+      const {
+        bvn: _bvn,
+        id: _id,
+        userId: _opUserId,
+        ...profileData
+      } = userData.organizerProfile;
       organizerProfile = {
         ...profileData,
         accountNumber: profileData.accountNumber
@@ -184,17 +210,18 @@ export class AuthService {
       },
     });
 
-    const { password, passwordResetToken, passwordResetExpires, ...result } = user;
+    const {
+      password: _pw,
+      passwordResetToken: _prt,
+      passwordResetExpires: _pre,
+      ...result
+    } = user;
     return result;
   }
 
   private maskAccountNumber(accountNumber: string): string {
     if (accountNumber.length <= 6) return '***';
-    return (
-      accountNumber.slice(0, 3) +
-      '****' +
-      accountNumber.slice(-3)
-    );
+    return accountNumber.slice(0, 3) + '****' + accountNumber.slice(-3);
   }
 
   private generateToken(userId: string, email: string, role: string): string {
