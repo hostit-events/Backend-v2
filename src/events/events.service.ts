@@ -515,6 +515,74 @@ export class EventsService {
     };
   }
 
+  async cancel(eventId: string, organizerId: string) {
+    const event = await this.prisma.event.findUnique({
+      where: { id: eventId },
+      include: { ticketTypes: true },
+    });
+
+    if (!event) {
+      throw new NotFoundException('Event not found');
+    }
+
+    if (event.organizerId !== organizerId) {
+      throw new ForbiddenException('You can only cancel your own events');
+    }
+
+    if (event.status === EventStatus.CANCELLED) {
+      throw new BadRequestException('Event is already cancelled');
+    }
+
+    if (event.status === EventStatus.COMPLETED) {
+      throw new BadRequestException('Cannot cancel a completed event');
+    }
+
+    // Check if any tickets have been sold
+    const totalSold = event.ticketTypes.reduce(
+      (sum, tt) => sum + tt.soldCount,
+      0,
+    );
+
+    if (
+      event.status === EventStatus.PUBLISHED &&
+      totalSold > 0 &&
+      !event.isRefundable
+    ) {
+      throw new BadRequestException(
+        'Cannot cancel event with sold tickets that is not refundable',
+      );
+    }
+
+    // Cancel the event
+    const updatedEvent = await this.prisma.event.update({
+      where: { id: eventId },
+      data: { status: EventStatus.CANCELLED },
+    });
+
+    // If DRAFT, clean up ticket types
+    if (event.status === EventStatus.DRAFT) {
+      await this.prisma.ticketType.deleteMany({
+        where: { eventId },
+      });
+    }
+
+    // TODO: If tickets sold and refundable, queue refund processing (Phase 4/5)
+    if (totalSold > 0) {
+      this.logger.warn(
+        `Cancelled event ${eventId} has ${totalSold} sold tickets — refunds pending`,
+      );
+    }
+
+    this.logger.log(`Event cancelled: ${event.name} (${event.slug})`);
+
+    return {
+      id: updatedEvent.id,
+      name: updatedEvent.name,
+      status: updatedEvent.status,
+      message: 'Event has been cancelled.',
+    };
+  }
+
   async findBySlug(slug: string) {
     const event = await this.prisma.event.findUnique({
       where: { slug, status: EventStatus.PUBLISHED },
