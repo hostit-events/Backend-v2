@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEventDto } from './dto/create-event.dto';
+import { QueryEventsDto } from './dto/query-events.dto';
+import { EventStatus, Prisma } from '@prisma/client';
 import * as crypto from 'crypto';
 
 @Injectable()
@@ -125,6 +127,97 @@ export class EventsService {
     this.logger.log(`Event created: ${event.name} (${event.slug})`);
 
     return event;
+  }
+
+  async findAll(query: QueryEventsDto) {
+    const where: Prisma.EventWhereInput = {
+      status: EventStatus.PUBLISHED,
+    };
+
+    if (query.search) {
+      where.OR = [
+        { name: { contains: query.search, mode: 'insensitive' } },
+        { description: { contains: query.search, mode: 'insensitive' } },
+      ];
+    }
+
+    if (query.category) {
+      where.category = query.category;
+    }
+
+    if (query.location) {
+      where.location = { contains: query.location, mode: 'insensitive' };
+    }
+
+    if (query.isFree !== undefined) {
+      where.isFree = query.isFree;
+    }
+
+    if (query.startDate || query.endDate) {
+      where.startTime = {};
+      if (query.startDate) {
+        where.startTime.gte = new Date(query.startDate);
+      }
+      if (query.endDate) {
+        where.startTime.lte = new Date(query.endDate);
+      }
+    }
+
+    const orderBy: Prisma.EventOrderByWithRelationInput = {
+      [query.sort || 'startTime']: query.order || 'asc',
+    };
+
+    const [events, total] = await Promise.all([
+      this.prisma.event.findMany({
+        where,
+        orderBy,
+        skip: query.skip,
+        take: query.limit,
+        include: {
+          ticketTypes: {
+            select: {
+              name: true,
+              price: true,
+              quantity: true,
+              soldCount: true,
+            },
+          },
+          organizer: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+        },
+      }),
+      this.prisma.event.count({ where }),
+    ]);
+
+    const eventsWithStats = events.map((event) => {
+      const prices = event.ticketTypes.map((tt) => Number(tt.price));
+      const minPrice = prices.length > 0 ? Math.min(...prices) : 0;
+      const totalAvailable = event.ticketTypes.reduce(
+        (sum, tt) => sum + (tt.quantity - tt.soldCount),
+        0,
+      );
+
+      return {
+        ...event,
+        minPrice,
+        totalAvailable,
+      };
+    });
+
+    return {
+      events: eventsWithStats,
+      pagination: {
+        page: query.page,
+        limit: query.limit,
+        total,
+        totalPages: Math.ceil(total / query.limit),
+      },
+    };
   }
 
   private async generateUniqueSlug(name: string): Promise<string> {
