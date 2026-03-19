@@ -2,7 +2,9 @@ import {
   Controller,
   Post,
   Get,
+  Put,
   Body,
+  Param,
   Query,
   HttpCode,
   HttpStatus,
@@ -14,6 +16,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { EventsService } from './events.service';
 import { CreateEventDto } from './dto/create-event.dto';
+import { UpdateEventDto } from './dto/update-event.dto';
 import { QueryEventsDto } from './dto/query-events.dto';
 
 @ApiTags('Events')
@@ -28,6 +31,13 @@ export class EventsController {
     return this.eventsService.findAll(query);
   }
 
+  @Get(':slug')
+  @Public()
+  @ApiOperation({ summary: 'Get event details by slug' })
+  findBySlug(@Param('slug') slug: string) {
+    return this.eventsService.findBySlug(slug);
+  }
+
   @Post()
   @ApiBearerAuth()
   @Roles(UserRole.ORGANIZER)
@@ -35,5 +45,25 @@ export class EventsController {
   @ApiOperation({ summary: 'Create a new event with ticket types (DRAFT)' })
   create(@CurrentUser('id') organizerId: string, @Body() dto: CreateEventDto) {
     return this.eventsService.create(organizerId, dto);
+  }
+
+  @Post(':id/publish')
+  @ApiBearerAuth()
+  @Roles(UserRole.ORGANIZER)
+  @ApiOperation({ summary: 'Publish event (triggers on-chain creation)' })
+  publish(@Param('id') id: string, @CurrentUser('id') organizerId: string) {
+    return this.eventsService.publish(id, organizerId);
+  }
+
+  @Put(':id')
+  @ApiBearerAuth()
+  @Roles(UserRole.ORGANIZER)
+  @ApiOperation({ summary: 'Update event (owner, DRAFT only)' })
+  update(
+    @Param('id') id: string,
+    @CurrentUser('id') organizerId: string,
+    @Body() dto: UpdateEventDto,
+  ) {
+    return this.eventsService.update(id, organizerId, dto);
   }
 }
