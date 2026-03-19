@@ -47,6 +47,14 @@ export class EventsController {
     return this.eventsService.create(organizerId, dto);
   }
 
+  @Post(':id/publish')
+  @ApiBearerAuth()
+  @Roles(UserRole.ORGANIZER)
+  @ApiOperation({ summary: 'Publish event (triggers on-chain creation)' })
+  publish(@Param('id') id: string, @CurrentUser('id') organizerId: string) {
+    return this.eventsService.publish(id, organizerId);
+  }
+
   @Put(':id')
   @ApiBearerAuth()
   @Roles(UserRole.ORGANIZER)

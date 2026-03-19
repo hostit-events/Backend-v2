@@ -5,18 +5,28 @@ import {
   NotFoundException,
   Logger,
 } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import { QueryEventsDto } from './dto/query-events.dto';
-import { EventStatus, Prisma } from '@prisma/client';
+import {
+  EventStatus,
+  BlockchainTxType,
+  BlockchainTxStatus,
+  Prisma,
+} from '@prisma/client';
 import * as crypto from 'crypto';
 
 @Injectable()
 export class EventsService {
   private readonly logger = new Logger(EventsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @InjectQueue('event-publish') private readonly eventPublishQueue: Queue,
+  ) {}
 
   async create(organizerId: string, dto: CreateEventDto) {
     // Verify organizer has KYC VERIFIED status
@@ -399,6 +409,110 @@ export class EventsService {
       `Event updated: ${updatedEvent.name} (${updatedEvent.slug})`,
     );
     return updatedEvent;
+  }
+
+  async publish(eventId: string, organizerId: string) {
+    const event = await this.prisma.event.findUnique({
+      where: { id: eventId },
+      include: { ticketTypes: true },
+    });
+
+    if (!event) {
+      throw new NotFoundException('Event not found');
+    }
+
+    if (event.organizerId !== organizerId) {
+      throw new ForbiddenException('You can only publish your own events');
+    }
+
+    if (event.status !== EventStatus.DRAFT) {
+      throw new BadRequestException('Only DRAFT events can be published');
+    }
+
+    // Validate completeness
+    if (
+      !event.name ||
+      !event.description ||
+      !event.venue ||
+      !event.location ||
+      !event.category ||
+      !event.startTime ||
+      !event.endTime ||
+      !event.purchaseStartTime
+    ) {
+      throw new BadRequestException('Event has incomplete required fields');
+    }
+
+    if (event.ticketTypes.length === 0) {
+      throw new BadRequestException('Event must have at least one ticket type');
+    }
+
+    // Generate symbol from name (e.g., "Lagos Tech Summit 2026" -> "LTS26")
+    const symbol = event.name
+      .split(/\s+/)
+      .map((w) => w[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 6);
+
+    // Calculate aggregate values for smart contract
+    const maxTickets = event.ticketTypes.reduce(
+      (sum, tt) => sum + tt.quantity,
+      0,
+    );
+    const maxTicketsPerUser = Math.max(
+      ...event.ticketTypes.map((tt) => tt.maxPerUser),
+    );
+
+    // Update status and create blockchain transaction
+    const [updatedEvent, blockchainTx] = await this.prisma.$transaction([
+      this.prisma.event.update({
+        where: { id: eventId },
+        data: { status: EventStatus.PUBLISHED },
+        include: {
+          ticketTypes: true,
+          organizer: {
+            select: { id: true, firstName: true, lastName: true },
+          },
+        },
+      }),
+      this.prisma.blockchainTransaction.create({
+        data: {
+          eventId,
+          type: BlockchainTxType.CREATE_EVENT,
+          status: BlockchainTxStatus.PENDING,
+        },
+      }),
+    ]);
+
+    // Queue on-chain creation (processor built in Phase 6)
+    await this.eventPublishQueue.add('create-event', {
+      eventId,
+      blockchainTxId: blockchainTx.id,
+      ticketData: {
+        startTime: Math.floor(event.startTime.getTime() / 1000),
+        endTime: Math.floor(event.endTime.getTime() / 1000),
+        purchaseStartTime: Math.floor(event.purchaseStartTime.getTime() / 1000),
+        maxTickets,
+        maxTicketsPerUser,
+        isFree: event.isFree,
+        isRefundable: event.isRefundable,
+        name: event.name,
+        symbol,
+        uri: `https://api.hostit.ng/events/${event.slug}/metadata`,
+      },
+      feeTypes: event.ticketTypes.map(() => 'ETH'),
+      prices: event.ticketTypes.map((tt) => tt.price.toString()),
+    });
+
+    this.logger.log(
+      `Event published: ${updatedEvent.name} (${updatedEvent.slug})`,
+    );
+
+    return {
+      ...updatedEvent,
+      message: 'Event is being published. On-chain registration is processing.',
+    };
   }
 
   async findBySlug(slug: string) {
