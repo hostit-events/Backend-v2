@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEventDto } from './dto/create-event.dto';
+import { UpdateEventDto } from './dto/update-event.dto';
 import { QueryEventsDto } from './dto/query-events.dto';
 import { EventStatus, Prisma } from '@prisma/client';
 import * as crypto from 'crypto';
@@ -219,6 +220,185 @@ export class EventsService {
         totalPages: Math.ceil(total / query.limit),
       },
     };
+  }
+
+  async update(eventId: string, organizerId: string, dto: UpdateEventDto) {
+    const event = await this.prisma.event.findUnique({
+      where: { id: eventId },
+      include: { ticketTypes: true },
+    });
+
+    if (!event) {
+      throw new NotFoundException('Event not found');
+    }
+
+    if (event.organizerId !== organizerId) {
+      throw new ForbiddenException('You can only update your own events');
+    }
+
+    if (event.status !== EventStatus.DRAFT) {
+      throw new ForbiddenException('Only DRAFT events can be updated');
+    }
+
+    // Validate time constraints using provided or existing values
+    const startTime = dto.startTime ? new Date(dto.startTime) : event.startTime;
+    const endTime = dto.endTime ? new Date(dto.endTime) : event.endTime;
+    const purchaseStartTime = dto.purchaseStartTime
+      ? new Date(dto.purchaseStartTime)
+      : event.purchaseStartTime;
+
+    const now = new Date();
+    const minStartTime = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    if (startTime <= minStartTime) {
+      throw new BadRequestException(
+        'Event start time must be at least 24 hours from now',
+      );
+    }
+
+    const minEndTime = new Date(startTime.getTime() + 24 * 60 * 60 * 1000);
+    if (endTime < minEndTime) {
+      throw new BadRequestException(
+        'Event end time must be at least 1 day after start time',
+      );
+    }
+
+    const maxPurchaseStart = new Date(
+      startTime.getTime() - 24 * 60 * 60 * 1000,
+    );
+    if (purchaseStartTime > maxPurchaseStart) {
+      throw new BadRequestException(
+        'Purchase start time must be at least 1 day before event start',
+      );
+    }
+
+    // Regenerate slug if name changed
+    let slug = event.slug;
+    if (dto.name && dto.name !== event.name) {
+      slug = await this.generateUniqueSlug(dto.name);
+    }
+
+    // Free event price validation
+    const isFree = dto.isFree ?? event.isFree;
+    if (dto.ticketTypes) {
+      if (isFree) {
+        const hasNonZeroPrice = dto.ticketTypes.some((tt) => tt.price !== 0);
+        if (hasNonZeroPrice) {
+          throw new BadRequestException(
+            'All ticket prices must be 0 for free events',
+          );
+        }
+      } else {
+        const hasInvalidPrice = dto.ticketTypes.some(
+          (tt) => tt.price > 0 && tt.price < 500,
+        );
+        if (hasInvalidPrice) {
+          throw new BadRequestException(
+            'Ticket prices for paid events must be at least 500 NGN',
+          );
+        }
+      }
+    }
+
+    // Handle ticket type updates in a transaction
+    const updatedEvent = await this.prisma.$transaction(async (tx) => {
+      // Handle ticket types if provided
+      if (dto.ticketTypes) {
+        const incomingIds = dto.ticketTypes
+          .filter((tt) => tt.id)
+          .map((tt) => tt.id!);
+
+        // Find ticket types to delete (existing but not in incoming)
+        const toDelete = event.ticketTypes.filter(
+          (tt) => !incomingIds.includes(tt.id),
+        );
+
+        // Check if any to-delete types have sales
+        const hasActiveSales = toDelete.some((tt) => tt.soldCount > 0);
+        if (hasActiveSales) {
+          throw new BadRequestException(
+            'Cannot remove ticket types that have sales',
+          );
+        }
+
+        // Delete removed ticket types
+        if (toDelete.length > 0) {
+          await tx.ticketType.deleteMany({
+            where: { id: { in: toDelete.map((tt) => tt.id) } },
+          });
+        }
+
+        // Upsert ticket types
+        for (const tt of dto.ticketTypes) {
+          if (tt.id) {
+            await tx.ticketType.update({
+              where: { id: tt.id },
+              data: {
+                name: tt.name,
+                description: tt.description,
+                price: tt.price,
+                quantity: tt.quantity,
+                maxPerUser: tt.maxPerUser ?? 5,
+                salesStartDate: tt.salesStartDate
+                  ? new Date(tt.salesStartDate)
+                  : null,
+                salesEndDate: tt.salesEndDate
+                  ? new Date(tt.salesEndDate)
+                  : null,
+              },
+            });
+          } else {
+            await tx.ticketType.create({
+              data: {
+                eventId,
+                name: tt.name,
+                description: tt.description,
+                price: tt.price,
+                quantity: tt.quantity,
+                maxPerUser: tt.maxPerUser ?? 5,
+                salesStartDate: tt.salesStartDate
+                  ? new Date(tt.salesStartDate)
+                  : undefined,
+                salesEndDate: tt.salesEndDate
+                  ? new Date(tt.salesEndDate)
+                  : undefined,
+              },
+            });
+          }
+        }
+      }
+
+      // Update event fields
+      return tx.event.update({
+        where: { id: eventId },
+        data: {
+          ...(dto.name && { name: dto.name }),
+          slug,
+          ...(dto.description && { description: dto.description }),
+          ...(dto.venue && { venue: dto.venue }),
+          ...(dto.location && { location: dto.location }),
+          ...(dto.category && { category: dto.category }),
+          ...(dto.coverImage !== undefined && { coverImage: dto.coverImage }),
+          ...(dto.startTime && { startTime }),
+          ...(dto.endTime && { endTime }),
+          ...(dto.purchaseStartTime && { purchaseStartTime }),
+          ...(dto.isFree !== undefined && { isFree: dto.isFree }),
+          ...(dto.isRefundable !== undefined && {
+            isRefundable: dto.isRefundable,
+          }),
+        },
+        include: {
+          ticketTypes: true,
+          organizer: {
+            select: { id: true, firstName: true, lastName: true },
+          },
+        },
+      });
+    });
+
+    this.logger.log(
+      `Event updated: ${updatedEvent.name} (${updatedEvent.slug})`,
+    );
+    return updatedEvent;
   }
 
   async findBySlug(slug: string) {
