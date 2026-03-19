@@ -3,6 +3,7 @@ import {
   Post,
   Get,
   Put,
+  Delete,
   Body,
   Param,
   Query,
@@ -65,5 +66,13 @@ export class EventsController {
     @Body() dto: UpdateEventDto,
   ) {
     return this.eventsService.update(id, organizerId, dto);
+  }
+
+  @Delete(':id')
+  @ApiBearerAuth()
+  @Roles(UserRole.ORGANIZER)
+  @ApiOperation({ summary: 'Cancel event (soft delete)' })
+  cancel(@Param('id') id: string, @CurrentUser('id') organizerId: string) {
+    return this.eventsService.cancel(id, organizerId);
   }
 }
