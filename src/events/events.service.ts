@@ -2,6 +2,7 @@ import {
   Injectable,
   BadRequestException,
   ForbiddenException,
+  NotFoundException,
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
@@ -217,6 +218,46 @@ export class EventsService {
         total,
         totalPages: Math.ceil(total / query.limit),
       },
+    };
+  }
+
+  async findBySlug(slug: string) {
+    const event = await this.prisma.event.findUnique({
+      where: { slug, status: EventStatus.PUBLISHED },
+      include: {
+        ticketTypes: true,
+        organizer: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+          },
+        },
+      },
+    });
+
+    if (!event) {
+      throw new NotFoundException('Event not found');
+    }
+
+    const now = new Date();
+    const ticketTypes = event.ticketTypes.map((tt) => {
+      const available = tt.quantity - tt.soldCount;
+      const withinSaleDates =
+        (!tt.salesStartDate || tt.salesStartDate <= now) &&
+        (!tt.salesEndDate || tt.salesEndDate >= now);
+      const isOnSale = available > 0 && withinSaleDates;
+
+      return {
+        ...tt,
+        available,
+        isOnSale,
+      };
+    });
+
+    return {
+      ...event,
+      ticketTypes,
     };
   }
 

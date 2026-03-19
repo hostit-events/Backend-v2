@@ -3,6 +3,7 @@ import {
   Post,
   Get,
   Body,
+  Param,
   Query,
   HttpCode,
   HttpStatus,
@@ -26,6 +27,13 @@ export class EventsController {
   @ApiOperation({ summary: 'Browse and search published events' })
   findAll(@Query() query: QueryEventsDto) {
     return this.eventsService.findAll(query);
+  }
+
+  @Get(':slug')
+  @Public()
+  @ApiOperation({ summary: 'Get event details by slug' })
+  findBySlug(@Param('slug') slug: string) {
+    return this.eventsService.findBySlug(slug);
   }
 
   @Post()
