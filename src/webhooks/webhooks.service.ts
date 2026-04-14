@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
   PaymentProvider,
+  Prisma,
   TicketStatus,
   TransactionStatus,
 } from '@prisma/client';
@@ -14,6 +15,11 @@ interface SuccessInput {
   amount: number; // NGN
   channel?: string;
   paidAt?: Date;
+  /**
+   * Actual gateway fee in NGN as reported by the provider's settlement
+   * payload. When present, finalises the per-txn invoice ledger.
+   */
+  gatewayFee?: number;
 }
 
 interface FailureInput {
@@ -64,6 +70,13 @@ export class WebhooksService {
         data: {
           status: TransactionStatus.SUCCESS,
           providerReference: input.providerReference,
+          // Persist the actual gateway fee from the settlement payload
+          // so the per-txn invoice ledger is complete. Skip the field
+          // entirely when the provider didn't include it — keeps the
+          // existing NULL meaning of "not yet reported" intact.
+          ...(input.gatewayFee != null
+            ? { gatewayFee: new Prisma.Decimal(input.gatewayFee) }
+            : {}),
           metadata: {
             ...(transaction.metadata as Record<string, any> | null),
             channel: input.channel,
