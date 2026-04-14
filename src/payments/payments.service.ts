@@ -10,6 +10,7 @@ import {
   PaymentInitResult,
   PaymentVerifyResult,
 } from './interfaces/payment-provider.interface';
+import { MonnifyProvider } from './providers/monnify.provider';
 import { PaystackProvider } from './providers/paystack.provider';
 
 /**
@@ -29,9 +30,10 @@ export class PaymentsService {
    */
   private readonly providers: Partial<Record<PaymentProvider, IPaymentProvider>>;
 
-  constructor(paystack: PaystackProvider) {
+  constructor(paystack: PaystackProvider, monnify: MonnifyProvider) {
     this.providers = {
       [PaymentProvider.PAYSTACK]: paystack,
+      [PaymentProvider.MONNIFY]: monnify,
     };
   }
 
