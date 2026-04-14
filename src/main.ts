@@ -8,7 +8,9 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  // rawBody enables Paystack/Monnify webhook signature verification
+  // against the unmodified request payload.
+  const app = await NestFactory.create(AppModule, { rawBody: true });
   const configService = app.get(ConfigService);
   const port = configService.get<number>('app.port', 3000);
 

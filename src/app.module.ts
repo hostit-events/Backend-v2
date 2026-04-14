@@ -10,6 +10,8 @@ import { HealthModule } from './health/health.module';
 import { AuthModule } from './auth/auth.module';
 import { EventsModule } from './events/events.module';
 import { PaymentsModule } from './payments/payments.module';
+import { WebhooksModule } from './webhooks/webhooks.module';
+import { BlockchainModule } from './blockchain/blockchain.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import {
@@ -61,6 +63,8 @@ import {
     AuthModule,
     EventsModule,
     PaymentsModule,
+    BlockchainModule,
+    WebhooksModule,
   ],
   controllers: [AppController],
   providers: [
