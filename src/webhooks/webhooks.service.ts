@@ -40,18 +40,9 @@ export class WebhooksService {
   ) {}
 
   async handleSuccess(input: SuccessInput): Promise<void> {
-    const txn = await this.prisma.transaction.findFirst({
-      where: { id: input.reference },
+    const transaction = await this.prisma.transaction.findUnique({
+      where: { reference: input.reference },
     });
-
-    // Reference may be our generated id OR a provider-generated string we
-    // stored under metadata — for now we look it up by id, fall back to
-    // metadata search in a single query.
-    const transaction =
-      txn ??
-      (await this.prisma.transaction.findFirst({
-        where: { providerReference: input.reference },
-      }));
 
     if (!transaction) {
       this.logger.warn(
@@ -67,7 +58,7 @@ export class WebhooksService {
       return;
     }
 
-    const ticketIds = await this.prisma.$transaction(async (tx) => {
+    const tickets = await this.prisma.$transaction(async (tx) => {
       await tx.transaction.update({
         where: { id: transaction.id },
         data: {
@@ -84,32 +75,20 @@ export class WebhooksService {
 
       // Tickets stay PENDING until the on-chain mint confirms.
       // The mint queue worker (Phase 6) flips them to CONFIRMED.
-      const tickets = await tx.ticket.findMany({
-        where: {
-          OR: [
-            { id: transaction.ticketId ?? undefined },
-            { reference: transaction.providerReference ?? undefined },
-          ],
-        },
+      return tx.ticket.findMany({
+        where: { transactionId: transaction.id },
         select: { id: true, eventId: true },
       });
-
-      return tickets;
     });
 
-    for (const t of ticketIds) {
+    for (const t of tickets) {
       await this.mintQueue.enqueueMint(t.id, t.eventId);
     }
   }
 
   async handleFailure(input: FailureInput): Promise<void> {
-    const transaction = await this.prisma.transaction.findFirst({
-      where: {
-        OR: [
-          { id: input.reference },
-          { providerReference: input.reference },
-        ],
-      },
+    const transaction = await this.prisma.transaction.findUnique({
+      where: { reference: input.reference },
     });
 
     if (!transaction) {
@@ -132,24 +111,39 @@ export class WebhooksService {
         data: { status: TransactionStatus.FAILED },
       });
 
-      if (!transaction.ticketId) return;
-
-      const ticket = await tx.ticket.findUnique({
-        where: { id: transaction.ticketId },
+      const tickets = await tx.ticket.findMany({
+        where: { transactionId: transaction.id },
         select: { id: true, ticketTypeId: true, status: true },
       });
-      if (!ticket || ticket.status === TicketStatus.CANCELLED) return;
 
-      await tx.ticket.update({
-        where: { id: ticket.id },
-        data: { status: TicketStatus.CANCELLED },
-      });
+      // Group decrements by ticketType so a single update handles all
+      // seats of the same tier. Cancelled tickets are skipped so a
+      // re-delivered failure webhook can't double-release inventory.
+      const decrementsByType = new Map<string, number>();
+      for (const t of tickets) {
+        if (t.status === TicketStatus.CANCELLED) continue;
+        decrementsByType.set(
+          t.ticketTypeId,
+          (decrementsByType.get(t.ticketTypeId) ?? 0) + 1,
+        );
+      }
 
-      // Release the seat back to inventory.
-      await tx.ticketType.update({
-        where: { id: ticket.ticketTypeId },
-        data: { soldCount: { decrement: 1 } },
-      });
+      const liveIds = tickets
+        .filter((t) => t.status !== TicketStatus.CANCELLED)
+        .map((t) => t.id);
+      if (liveIds.length > 0) {
+        await tx.ticket.updateMany({
+          where: { id: { in: liveIds } },
+          data: { status: TicketStatus.CANCELLED },
+        });
+      }
+
+      for (const [ticketTypeId, count] of decrementsByType) {
+        await tx.ticketType.update({
+          where: { id: ticketTypeId },
+          data: { soldCount: { decrement: count } },
+        });
+      }
     });
   }
 }
