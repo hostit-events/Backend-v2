@@ -17,6 +17,7 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { BecomeOrganizerDto } from './dto/become-organizer.dto';
 import { PaystackService } from '../paystack/paystack.service';
+import { MonnifyProvider } from '../payments/providers/monnify.provider';
 import { UserRole } from '@prisma/client';
 
 @Injectable()
@@ -28,6 +29,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly paystackService: PaystackService,
+    private readonly monnifyProvider: MonnifyProvider,
   ) {}
 
   async register(dto: RegisterDto) {
@@ -275,6 +277,41 @@ export class AuthService {
       throw new BadRequestException('Bank account verification failed');
     }
 
+    // Create the Paystack and Monnify subaccounts that will receive
+    // this organizer's settlement payouts. Both calls are non-blocking
+    // — provider outages shouldn't stop role upgrade. Admin can retry
+    // via a backfill endpoint later (PR follow-up). Run in parallel
+    // since they're independent and we don't want to double the
+    // /become-organizer latency for the happy path.
+    const [paystackResult, monnifyResult] = await Promise.allSettled([
+      this.paystackService.createSubaccount({
+        businessName: bankData.accountName,
+        bankCode: dto.bankCode,
+        accountNumber: bankData.accountNumber,
+      }),
+      this.monnifyProvider.createSubAccount({
+        bankCode: dto.bankCode,
+        accountNumber: bankData.accountNumber,
+        email: user.email,
+      }),
+    ]);
+
+    const paystackSubaccount =
+      paystackResult.status === 'fulfilled' ? paystackResult.value : null;
+    if (paystackResult.status === 'rejected') {
+      this.logger.warn(
+        `Paystack subaccount creation failed for user ${userId}: ${(paystackResult.reason as Error).message}`,
+      );
+    }
+
+    const monnifySubAccount =
+      monnifyResult.status === 'fulfilled' ? monnifyResult.value : null;
+    if (monnifyResult.status === 'rejected') {
+      this.logger.warn(
+        `Monnify sub-account creation failed for user ${userId}: ${(monnifyResult.reason as Error).message}`,
+      );
+    }
+
     // Create organizer profile and upgrade role in a transaction
     const [_updatedUser, organizerProfile] = await this.prisma.$transaction([
       this.prisma.user.update({
@@ -293,6 +330,12 @@ export class AuthService {
           bankVerified: true,
           kycTier: 'BASIC',
           kycStatus: 'VERIFIED',
+          paystackSubaccountCode: paystackSubaccount?.subaccountCode ?? null,
+          paystackSubaccountId:
+            paystackSubaccount?.id != null
+              ? String(paystackSubaccount.id)
+              : null,
+          monnifySubAccountCode: monnifySubAccount?.subAccountCode ?? null,
         },
       }),
     ]);

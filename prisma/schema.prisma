@@ -146,8 +146,17 @@ model OrganizerProfile {
   selfieUrl       String?   @map("selfie_url")
   businessName    String?   @map("business_name")
   businessAddress String?   @map("business_address")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  // Provider-side split settlement identifiers, populated when an
+  // organizer completes /become-organizer. Each gateway gets its own
+  // subaccount so PaymentsService can route a 97/3 split per
+  // transaction without HostIT custodying funds.
+  paystackSubaccountCode String? @map("paystack_subaccount_code")
+  paystackSubaccountId   String? @map("paystack_subaccount_id")
+  monnifySubAccountCode  String? @map("monnify_sub_account_code")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   user User @relation(fields: [userId], references: [id])
 
@@ -252,8 +261,19 @@ model Transaction {
   providerReference String?           @map("provider_reference")
   status            TransactionStatus @default(PENDING)
   metadata          Json?
-  createdAt         DateTime          @default(now()) @map("created_at")
-  updatedAt         DateTime          @updatedAt @map("updated_at")
+
+  // Per-transaction invoice ledger. `platformFee` is HostIT's 3%
+  // (calculated from gross at init time and locked in). `gatewayFee`
+  // is populated from the settlement webhook when the provider
+  // reports it. `feeBearer` records who absorbed the gateway fee for
+  // future-proofing different commercial terms.
+  platformFee     Decimal? @map("platform_fee") @db.Decimal
+  organizerAmount Decimal? @map("organizer_amount") @db.Decimal
+  gatewayFee      Decimal? @map("gateway_fee") @db.Decimal
+  feeBearer       String?  @map("fee_bearer")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   ticket  Ticket?  @relation("LegacyTicketTransaction", fields: [ticketId], references: [id])
   tickets Ticket[] @relation("TransactionTickets")

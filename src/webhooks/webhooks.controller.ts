@@ -61,6 +61,8 @@ export class WebhooksController {
         channel?: string;
         paid_at?: string;
         id?: number;
+        /** Paystack reports gateway fees in kobo on charge.success. */
+        fees?: number;
       };
     };
 
@@ -76,6 +78,7 @@ export class WebhooksController {
         amount: data.amount / 100,
         channel: data.channel,
         paidAt: data.paid_at ? new Date(data.paid_at) : undefined,
+        gatewayFee: data.fees != null ? data.fees / 100 : undefined,
       });
     } else if (event === 'charge.failed') {
       await this.webhooks.handleFailure({
@@ -114,6 +117,10 @@ export class WebhooksController {
         paymentReference: string;
         transactionReference: string;
         amountPaid: number;
+        /** Total the buyer was charged including fees, when feeBearer=customer. */
+        totalPayable?: number;
+        /** Some Monnify payload versions ship the fee directly. */
+        fee?: number;
         paymentMethod?: string;
         paidOn?: string;
       };
@@ -124,6 +131,20 @@ export class WebhooksController {
     if (!data?.paymentReference) return { received: true };
 
     if (eventType === 'SUCCESSFUL_TRANSACTION') {
+      // Monnify exposes the fee one of two ways depending on payload
+      // version — prefer an explicit `fee` field when present, fall
+      // back to (totalPayable - amountPaid) when feeBearer was the
+      // customer (totalPayable > amountPaid). When feeBearer is the
+      // organizer the fee comes out of the settlement, not the
+      // checkout, so neither field is present and we leave it null
+      // for a future settlement-webhook handler to fill in.
+      const gatewayFee =
+        data.fee != null
+          ? data.fee
+          : data.totalPayable != null && data.totalPayable > data.amountPaid
+            ? data.totalPayable - data.amountPaid
+            : undefined;
+
       await this.webhooks.handleSuccess({
         reference: data.paymentReference,
         provider: PaymentProvider.MONNIFY,
@@ -131,6 +152,7 @@ export class WebhooksController {
         amount: data.amountPaid,
         channel: data.paymentMethod,
         paidAt: data.paidOn ? new Date(data.paidOn) : undefined,
+        gatewayFee,
       });
     } else if (eventType === 'FAILED_TRANSACTION') {
       await this.webhooks.handleFailure({

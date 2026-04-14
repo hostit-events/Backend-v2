@@ -8,6 +8,20 @@
  * naira, USD equivalent, etc.).
  */
 
+/**
+ * Provider-side split settlement instructions. When supplied, the
+ * gateway routes funds directly to the organizer's subaccount and
+ * deducts HostIT's `platformAmount` cut on the way through.
+ */
+export interface PaymentSplit {
+  /** Provider-specific subaccount identifier (Paystack: `subaccount_code`, Monnify: `subAccountCode`). */
+  subaccountCode: string;
+  /** HostIT's cut in NGN (provider converts to its native unit). */
+  platformAmount: number;
+  /** Who absorbs the gateway fee. Today we always use ORGANIZER. */
+  feeBearer: 'ORGANIZER' | 'PLATFORM';
+}
+
 export interface InitPaymentDto {
   /** Amount in NGN (provider converts internally). */
   amount: number;
@@ -18,6 +32,8 @@ export interface InitPaymentDto {
   callbackUrl: string;
   /** Free-form metadata forwarded to the provider. */
   metadata: Record<string, any>;
+  /** Optional split-settlement instruction. Falls back to no-split. */
+  split?: PaymentSplit;
 }
 
 export interface PaymentInitResult {

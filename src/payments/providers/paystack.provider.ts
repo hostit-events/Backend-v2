@@ -49,7 +49,7 @@ export class PaystackProvider implements IPaymentProvider {
   }
 
   async initializePayment(data: InitPaymentDto): Promise<PaymentInitResult> {
-    const body = {
+    const body: Record<string, unknown> = {
       email: data.email,
       amount: data.amount * 100, // NGN → kobo
       reference: data.reference,
@@ -57,6 +57,15 @@ export class PaystackProvider implements IPaymentProvider {
       channels: ['card', 'bank', 'ussd', 'bank_transfer'],
       metadata: data.metadata,
     };
+
+    // Split settlement: route net to the organizer's subaccount,
+    // deduct HostIT's fixed-amount cut, organizer absorbs gateway fee.
+    if (data.split) {
+      body.subaccount = data.split.subaccountCode;
+      body.transaction_charge = data.split.platformAmount * 100; // kobo
+      body.bearer =
+        data.split.feeBearer === 'PLATFORM' ? 'account' : 'subaccount';
+    }
 
     const res = await this.request<PaystackInitResponse>(
       '/transaction/initialize',
