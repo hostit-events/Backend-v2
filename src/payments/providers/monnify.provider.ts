@@ -68,7 +68,7 @@ export class MonnifyProvider implements IPaymentProvider {
   }
 
   async initializePayment(data: InitPaymentDto): Promise<PaymentInitResult> {
-    const body = {
+    const body: Record<string, unknown> = {
       amount: data.amount, // Naira, no conversion
       customerName: this.deriveCustomerName(data),
       customerEmail: data.email,
@@ -87,6 +87,21 @@ export class MonnifyProvider implements IPaymentProvider {
       // objects/arrays trip their validator silently.
       metaData: this.flattenMetadata(data.metadata),
     };
+
+    // Split settlement: send the organizer's share to their subaccount
+    // as a fixed NGN amount (mirrors Paystack's exact-amount approach
+    // for symmetric ledger entries). The remainder lands in HostIT's
+    // main merchant balance — that's the 3% platform fee.
+    if (data.split) {
+      const organizerAmount = data.amount - data.split.platformAmount;
+      body.incomeSplitConfig = [
+        {
+          subAccountCode: data.split.subaccountCode,
+          splitAmount: organizerAmount,
+          feeBearer: data.split.feeBearer === 'ORGANIZER',
+        },
+      ];
+    }
 
     const res = await this.authedRequest<MonnifyInitResponse>(
       '/api/v1/merchant/transactions/init-transaction',
@@ -117,6 +132,51 @@ export class MonnifyProvider implements IPaymentProvider {
       paidAt: res.paidOn ? new Date(res.paidOn) : undefined,
       channel: res.paymentMethod,
       metadata: res.metaData,
+    };
+  }
+
+  /**
+   * Creates a Monnify sub-account that becomes the settlement target
+   * for this organizer's tickets. Monnify's endpoint is batch-shaped
+   * (always takes/returns an array) even when creating one — we call
+   * with a single-element array and return the first result.
+   *
+   * `defaultSplitPercentage: 0` so the per-transaction `incomeSplitConfig`
+   * we send at init time is the only thing controlling the split.
+   */
+  async createSubAccount(params: {
+    bankCode: string;
+    accountNumber: string;
+    email: string;
+  }): Promise<{ subAccountCode: string; accountName: string }> {
+    const res = await this.authedRequest<
+      Array<{
+        subAccountCode: string;
+        accountName: string;
+        accountNumber: string;
+      }>
+    >('/api/v1/sub-accounts', {
+      method: 'POST',
+      body: JSON.stringify([
+        {
+          currencyCode: 'NGN',
+          bankCode: params.bankCode,
+          accountNumber: params.accountNumber,
+          email: params.email,
+          defaultSplitPercentage: 0,
+        },
+      ]),
+    });
+
+    const created = res?.[0];
+    if (!created?.subAccountCode) {
+      throw new BadGatewayException(
+        'Monnify: sub-account creation returned empty response',
+      );
+    }
+    return {
+      subAccountCode: created.subAccountCode,
+      accountName: created.accountName,
     };
   }
 
