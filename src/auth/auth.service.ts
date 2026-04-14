@@ -275,6 +275,23 @@ export class AuthService {
       throw new BadRequestException('Bank account verification failed');
     }
 
+    // Create the Paystack subaccount that will receive this organizer's
+    // settlement payouts. Treat as non-blocking — provider outages
+    // shouldn't stop role upgrade. Admin can retry via a backfill
+    // endpoint later (PR follow-up).
+    let paystackSubaccount: { id: number; subaccountCode: string } | null = null;
+    try {
+      paystackSubaccount = await this.paystackService.createSubaccount({
+        businessName: bankData.accountName,
+        bankCode: dto.bankCode,
+        accountNumber: bankData.accountNumber,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Paystack subaccount creation failed for user ${userId}: ${(err as Error).message}`,
+      );
+    }
+
     // Create organizer profile and upgrade role in a transaction
     const [_updatedUser, organizerProfile] = await this.prisma.$transaction([
       this.prisma.user.update({
@@ -293,6 +310,11 @@ export class AuthService {
           bankVerified: true,
           kycTier: 'BASIC',
           kycStatus: 'VERIFIED',
+          paystackSubaccountCode: paystackSubaccount?.subaccountCode ?? null,
+          paystackSubaccountId:
+            paystackSubaccount?.id != null
+              ? String(paystackSubaccount.id)
+              : null,
         },
       }),
     ]);

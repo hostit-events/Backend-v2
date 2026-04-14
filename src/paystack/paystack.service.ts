@@ -62,6 +62,37 @@ export class PaystackService {
     };
   }
 
+  /**
+   * Creates a Paystack subaccount that becomes the settlement target
+   * for this organizer's tickets. We set `percentage_charge: 0` on
+   * the subaccount itself and override per-transaction via
+   * `transaction_charge` at init time — that gives us exact control
+   * over HostIT's 3% cut on gross.
+   */
+  async createSubaccount(params: {
+    businessName: string;
+    bankCode: string;
+    accountNumber: string;
+  }): Promise<{ id: number; subaccountCode: string }> {
+    const data = await this.request<{
+      id: number;
+      subaccount_code: string;
+    }>('/subaccount', {
+      method: 'POST',
+      body: JSON.stringify({
+        business_name: params.businessName,
+        bank_code: params.bankCode,
+        account_number: params.accountNumber,
+        percentage_charge: 0,
+      }),
+    });
+
+    return {
+      id: data.id,
+      subaccountCode: data.subaccount_code,
+    };
+  }
+
   async resolveBvn(
     bvn: string,
   ): Promise<{ bvn: string; firstName: string; lastName: string }> {
