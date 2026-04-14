@@ -10,6 +10,7 @@ import {
   PaymentInitResult,
   PaymentVerifyResult,
 } from './interfaces/payment-provider.interface';
+import { PaystackProvider } from './providers/paystack.provider';
 
 /**
  * Orchestrator that resolves the correct provider implementation for a
@@ -26,8 +27,13 @@ export class PaymentsService {
    * Internal registry of wired providers. Populated as each provider
    * lands. Kept private so callers go through `resolveProvider`.
    */
-  private readonly providers: Partial<Record<PaymentProvider, IPaymentProvider>> =
-    {};
+  private readonly providers: Partial<Record<PaymentProvider, IPaymentProvider>>;
+
+  constructor(paystack: PaystackProvider) {
+    this.providers = {
+      [PaymentProvider.PAYSTACK]: paystack,
+    };
+  }
 
   resolveProvider(provider: PaymentProvider): IPaymentProvider {
     switch (provider) {
