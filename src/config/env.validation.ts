@@ -25,6 +25,10 @@ export const envValidationSchema = Joi.object({
   PAYSTACK_SECRET_KEY: Joi.string().required(),
   PAYSTACK_PUBLIC_KEY: Joi.string().required(),
 
+  // Dev escape hatches — must NOT be 'true' in production. The
+  // bypass also self-disables when NODE_ENV=production.
+  SKIP_BVN_VERIFICATION: Joi.string().valid('true', 'false').default('false'),
+
   // Monnify
   MONNIFY_API_KEY: Joi.string().required(),
   MONNIFY_SECRET_KEY: Joi.string().required(),

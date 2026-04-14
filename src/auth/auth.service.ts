@@ -241,12 +241,27 @@ export class AuthService {
       throw new ConflictException('Organizer profile already exists');
     }
 
-    // Verify BVN via Paystack
+    // Verify BVN via Paystack. Paystack's BVN endpoint is a NIBSS
+    // passthrough that's typically not provisioned on test accounts —
+    // setting `SKIP_BVN_VERIFICATION=true` bypasses the call so the
+    // rest of the organizer flow is testable in dev. Production env
+    // validation should reject this flag.
+    const skipBvn =
+      this.configService.get<string>('SKIP_BVN_VERIFICATION') === 'true' &&
+      this.configService.get<string>('NODE_ENV') !== 'production';
+
     let bvnData: { bvn: string; firstName: string; lastName: string };
-    try {
-      bvnData = await this.paystackService.resolveBvn(dto.bvn);
-    } catch {
-      throw new BadRequestException('BVN verification failed');
+    if (skipBvn) {
+      this.logger.warn(
+        `[DEV] Skipping BVN verification for user ${userId} (SKIP_BVN_VERIFICATION=true)`,
+      );
+      bvnData = { bvn: dto.bvn, firstName: 'Dev', lastName: 'Bypass' };
+    } else {
+      try {
+        bvnData = await this.paystackService.resolveBvn(dto.bvn);
+      } catch {
+        throw new BadRequestException('BVN verification failed');
+      }
     }
 
     // Verify bank account via Paystack

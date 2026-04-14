@@ -73,13 +73,19 @@ export class MonnifyProvider implements IPaymentProvider {
       customerName: this.deriveCustomerName(data),
       customerEmail: data.email,
       paymentReference: data.reference,
-      paymentDescription:
-        (data.metadata?.description as string) ?? 'HostIT ticket purchase',
+      // Monnify caps paymentDescription at ~100 chars in practice.
+      paymentDescription: (
+        (data.metadata?.description as string) ?? 'HostIT ticket purchase'
+      ).slice(0, 100),
       currencyCode: 'NGN',
       contractCode: this.contractCode,
       redirectUrl: data.callbackUrl,
-      paymentMethods: ['CARD', 'ACCOUNT_TRANSFER', 'USSD', 'NQR'],
-      metaData: data.metadata,
+      // NQR is gated per-merchant — leave it off so sandbox + new
+      // accounts don't get rejected with a generic "malformed" error.
+      paymentMethods: ['CARD', 'ACCOUNT_TRANSFER', 'USSD'],
+      // Monnify expects metaData as a flat string→string map. Nested
+      // objects/arrays trip their validator silently.
+      metaData: this.flattenMetadata(data.metadata),
     };
 
     const res = await this.authedRequest<MonnifyInitResponse>(
@@ -275,6 +281,23 @@ export class MonnifyProvider implements IPaymentProvider {
       default:
         return 'pending';
     }
+  }
+
+  /**
+   * Monnify's metaData field requires flat string values. Flatten any
+   * nested object/array entries to JSON strings so the field still
+   * survives the round-trip without breaking their validator.
+   */
+  private flattenMetadata(
+    metadata: Record<string, any> | undefined,
+  ): Record<string, string> {
+    if (!metadata) return {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(metadata)) {
+      if (v == null) continue;
+      out[k] = typeof v === 'string' ? v : JSON.stringify(v);
+    }
+    return out;
   }
 
   private deriveCustomerName(data: InitPaymentDto): string {

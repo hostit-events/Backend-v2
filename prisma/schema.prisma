@@ -223,20 +223,26 @@ model Ticket {
   createdAt       DateTime        @default(now()) @map("created_at")
   updatedAt       DateTime        @updatedAt @map("updated_at")
 
+  transactionId String? @map("transaction_id") @db.Uuid
+
   ticketType             TicketType              @relation(fields: [ticketTypeId], references: [id])
   event                  Event                   @relation(fields: [eventId], references: [id])
   buyer                  User?                   @relation(fields: [buyerId], references: [id])
-  transactions           Transaction[]
+  transaction            Transaction?            @relation("TransactionTickets", fields: [transactionId], references: [id])
+  transactions           Transaction[]           @relation("LegacyTicketTransaction")
   blockchainTransactions BlockchainTransaction[]
   notifications          Notification[]
 
   @@index([eventId])
   @@index([eventId, buyerEmail], map: "idx_ticket_event_buyer")
+  @@index([transactionId])
   @@map("tickets")
 }
 
 model Transaction {
   id                String            @id @default(uuid()) @db.Uuid
+  reference         String            @unique
+  quantity          Int               @default(1)
   ticketId          String?           @map("ticket_id") @db.Uuid
   eventId           String            @map("event_id") @db.Uuid
   buyerEmail        String            @map("buyer_email")
@@ -249,8 +255,9 @@ model Transaction {
   createdAt         DateTime          @default(now()) @map("created_at")
   updatedAt         DateTime          @updatedAt @map("updated_at")
 
-  ticket Ticket? @relation(fields: [ticketId], references: [id])
-  event  Event   @relation(fields: [eventId], references: [id])
+  ticket  Ticket?  @relation("LegacyTicketTransaction", fields: [ticketId], references: [id])
+  tickets Ticket[] @relation("TransactionTickets")
+  event   Event    @relation(fields: [eventId], references: [id])
 
   @@index([providerReference])
   @@index([eventId])
