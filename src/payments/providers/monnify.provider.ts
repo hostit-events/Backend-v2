@@ -141,8 +141,11 @@ export class MonnifyProvider implements IPaymentProvider {
    * (always takes/returns an array) even when creating one — we call
    * with a single-element array and return the first result.
    *
-   * `defaultSplitPercentage: 0` so the per-transaction `incomeSplitConfig`
-   * we send at init time is the only thing controlling the split.
+   * `defaultSplitPercentage: 97` matches the commercial split, so if
+   * a transaction is ever initialized without `incomeSplitConfig` the
+   * money still routes correctly. Monnify rejects values below 0.1,
+   * so we can't make this 0; using the intended split is defence in
+   * depth against an accidental missing-config at init time.
    */
   async createSubAccount(params: {
     bankCode: string;
@@ -163,7 +166,7 @@ export class MonnifyProvider implements IPaymentProvider {
           bankCode: params.bankCode,
           accountNumber: params.accountNumber,
           email: params.email,
-          defaultSplitPercentage: 0,
+          defaultSplitPercentage: 97,
         },
       ]),
     });

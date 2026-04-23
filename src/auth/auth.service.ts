@@ -266,15 +266,34 @@ export class AuthService {
       }
     }
 
-    // Verify bank account via Paystack
+    // Verify bank account via Paystack. Skipped in dev when
+    // SKIP_BANK_VERIFICATION=true — the Paystack and Monnify sandboxes
+    // accept mutually exclusive test bank data, so doing the upfront
+    // check blocks the other provider's sub-account creation. With the
+    // flag on, we trust user-provided values and let each provider's
+    // sub-account-create call validate independently.
+    const skipBank =
+      this.configService.get<string>('SKIP_BANK_VERIFICATION') === 'true' &&
+      this.configService.get<string>('NODE_ENV') !== 'production';
+
     let bankData: { accountNumber: string; accountName: string };
-    try {
-      bankData = await this.paystackService.resolveBankAccount(
-        dto.accountNumber,
-        dto.bankCode,
+    if (skipBank) {
+      this.logger.warn(
+        `[DEV] Skipping bank verification for user ${userId} (SKIP_BANK_VERIFICATION=true)`,
       );
-    } catch {
-      throw new BadRequestException('Bank account verification failed');
+      bankData = {
+        accountNumber: dto.accountNumber,
+        accountName: `${user.firstName} ${user.lastName}`.toUpperCase(),
+      };
+    } else {
+      try {
+        bankData = await this.paystackService.resolveBankAccount(
+          dto.accountNumber,
+          dto.bankCode,
+        );
+      } catch {
+        throw new BadRequestException('Bank account verification failed');
+      }
     }
 
     // Create the Paystack and Monnify subaccounts that will receive
