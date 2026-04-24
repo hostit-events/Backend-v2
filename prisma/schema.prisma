@@ -104,18 +104,37 @@ enum KycStatus {
   REJECTED
 }
 
+// Wallet custody model. Default DEVELOPER_CONTROLLED — platform holds
+// keys for buyers + organizers (see hostit skill §3B.2). Future opt-in
+// upgrade path to USER_CONTROLLED / MODULAR for power-user organizers.
+enum WalletType {
+  DEVELOPER_CONTROLLED
+  USER_CONTROLLED
+  MODULAR
+}
+
 // ============ MODELS ============
 
 model User {
-  id                   String    @id @default(uuid()) @db.Uuid
-  email                String    @unique
-  password             String
-  firstName            String    @map("first_name")
-  lastName             String    @map("last_name")
-  phone                String?
-  role                 UserRole  @default(BUYER)
-  walletAddress        String?   @map("wallet_address")
-  blockradarAddressId  String?   @map("blockradar_address_id")
+  id                  String   @id @default(uuid()) @db.Uuid
+  email               String   @unique
+  password            String
+  firstName           String   @map("first_name")
+  lastName            String   @map("last_name")
+  phone               String?
+  role                UserRole @default(BUYER)
+  walletAddress       String?  @map("wallet_address")
+  blockradarAddressId String?  @map("blockradar_address_id")
+
+  // Circle Wallet-as-a-Service (primary wallet provider — see hostit
+  // skill §3B). Populated by issue #64's registration-time wallet
+  // creation job. Null for users registered before Circle rollout
+  // until backfill runs.
+  circleWalletId      String?    @unique @map("circle_wallet_id")
+  circleWalletAddress String?    @map("circle_wallet_address")
+  circleWalletSetId   String?    @map("circle_wallet_set_id")
+  walletType          WalletType @default(DEVELOPER_CONTROLLED) @map("wallet_type")
+
   passwordResetToken   String?   @map("password_reset_token")
   passwordResetExpires DateTime? @map("password_reset_expires")
   createdAt            DateTime  @default(now()) @map("created_at")
@@ -311,16 +330,25 @@ model Payout {
 }
 
 model BlockchainTransaction {
-  id        String             @id @default(uuid()) @db.Uuid
-  ticketId  String?            @map("ticket_id") @db.Uuid
-  eventId   String?            @map("event_id") @db.Uuid
-  txHash    String?            @map("tx_hash")
-  type      BlockchainTxType
-  status    BlockchainTxStatus @default(PENDING)
-  retries   Int                @default(0)
-  error     String?
-  createdAt DateTime           @default(now()) @map("created_at")
-  updatedAt DateTime           @updatedAt @map("updated_at")
+  id       String             @id @default(uuid()) @db.Uuid
+  ticketId String?            @map("ticket_id") @db.Uuid
+  eventId  String?            @map("event_id") @db.Uuid
+  txHash   String?            @map("tx_hash")
+  type     BlockchainTxType
+  status   BlockchainTxStatus @default(PENDING)
+  retries  Int                @default(0)
+  error    String?
+
+  // Circle reconciliation. `circleTransactionId` is the ID returned by
+  // Circle SCP execute calls and matched against transaction webhooks
+  // (see issues #65, #67). `chain` disambiguates rows during the
+  // Lisk → Base migration.
+  circleTransactionId String? @unique @map("circle_transaction_id")
+  circleWalletId      String? @map("circle_wallet_id")
+  chain               String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   ticket Ticket? @relation(fields: [ticketId], references: [id])
   event  Event?  @relation(fields: [eventId], references: [id])
