@@ -13,6 +13,7 @@ import { PaymentsModule } from './payments/payments.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { BlockchainModule } from './blockchain/blockchain.module';
 import { CircleModule } from './circle/circle.module';
+import { WalletsModule } from './wallets/wallets.module';
 import { TicketsModule } from './tickets/tickets.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
@@ -64,6 +65,7 @@ import {
     }),
     PrismaModule,
     CircleModule,
+    WalletsModule,
     HealthModule,
     AuthModule,
     EventsModule,

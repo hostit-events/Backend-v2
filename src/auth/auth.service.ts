@@ -18,6 +18,7 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { BecomeOrganizerDto } from './dto/become-organizer.dto';
 import { PaystackService } from '../paystack/paystack.service';
 import { MonnifyProvider } from '../payments/providers/monnify.provider';
+import { WalletsService } from '../wallets/wallets.service';
 import { UserRole } from '@prisma/client';
 
 @Injectable()
@@ -30,6 +31,7 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly paystackService: PaystackService,
     private readonly monnifyProvider: MonnifyProvider,
+    private readonly walletsService: WalletsService,
   ) {}
 
   async register(dto: RegisterDto) {
@@ -57,15 +59,45 @@ export class AuthService {
       },
     });
 
-    // TODO: Queue Blockradar wallet creation (Phase 5)
+    // Enqueue Circle wallet creation. Async so registration latency
+    // isn't tied to Circle availability; Bull retries on transient
+    // failure and FAILED state is recoverable via the admin endpoint
+    // (#64). register() always creates BUYER users, so no role gate
+    // needed here — the processor is defensive regardless.
+    try {
+      await this.walletsService.enqueueWalletCreation(user.id);
+    } catch (err) {
+      // Redis/queue outage shouldn't block registration. The user
+      // lands without a wallet; admin retry picks them up later.
+      this.logger.warn(
+        `Failed to enqueue wallet creation for user ${user.id}: ${(err as Error).message}`,
+      );
+    }
 
-    const accessToken = this.generateToken(user.id, user.email, user.role);
+    // Re-read with wallets so the response reflects the PENDING row
+    // flipped in by the enqueue. The address + circleWalletId populate
+    // asynchronously — clients should poll /auth/me or subscribe to
+    // the webhook (#65).
+    const freshUser = await this.prisma.user.findUniqueOrThrow({
+      where: { id: user.id },
+      include: {
+        wallets: {
+          orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+        },
+      },
+    });
+
+    const accessToken = this.generateToken(
+      freshUser.id,
+      freshUser.email,
+      freshUser.role,
+    );
     const {
       password: _pw,
       passwordResetToken: _prt,
       passwordResetExpires: _pre,
       ...userWithoutPassword
-    } = user;
+    } = freshUser;
 
     return {
       accessToken,
@@ -170,7 +202,12 @@ export class AuthService {
   async getProfile(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      include: { organizerProfile: true },
+      include: {
+        organizerProfile: true,
+        wallets: {
+          orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+        },
+      },
     });
 
     if (!user) {

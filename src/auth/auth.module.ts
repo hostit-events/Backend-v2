@@ -7,11 +7,13 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { PaystackModule } from '../paystack/paystack.module';
 import { PaymentsModule } from '../payments/payments.module';
+import { WalletsModule } from '../wallets/wallets.module';
 
 @Module({
   imports: [
     PaystackModule,
     PaymentsModule,
+    WalletsModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       inject: [ConfigService],

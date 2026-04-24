@@ -113,27 +113,25 @@ enum WalletType {
   MODULAR
 }
 
+// Async wallet provisioning state. NULL until first enqueue (admin
+// users never enter the flow). FAILED surfaces to the admin retry
+// endpoint (#64).
+enum WalletCreationStatus {
+  PENDING
+  CREATED
+  FAILED
+}
+
 // ============ MODELS ============
 
 model User {
-  id                  String   @id @default(uuid()) @db.Uuid
-  email               String   @unique
-  password            String
-  firstName           String   @map("first_name")
-  lastName            String   @map("last_name")
-  phone               String?
-  role                UserRole @default(BUYER)
-  walletAddress       String?  @map("wallet_address")
-  blockradarAddressId String?  @map("blockradar_address_id")
-
-  // Circle Wallet-as-a-Service (primary wallet provider — see hostit
-  // skill §3B). Populated by issue #64's registration-time wallet
-  // creation job. Null for users registered before Circle rollout
-  // until backfill runs.
-  circleWalletId      String?    @unique @map("circle_wallet_id")
-  circleWalletAddress String?    @map("circle_wallet_address")
-  circleWalletSetId   String?    @map("circle_wallet_set_id")
-  walletType          WalletType @default(DEVELOPER_CONTROLLED) @map("wallet_type")
+  id        String   @id @default(uuid()) @db.Uuid
+  email     String   @unique
+  password  String
+  firstName String   @map("first_name")
+  lastName  String   @map("last_name")
+  phone     String?
+  role      UserRole @default(BUYER)
 
   passwordResetToken   String?   @map("password_reset_token")
   passwordResetExpires DateTime? @map("password_reset_expires")
@@ -145,8 +143,35 @@ model User {
   tickets          Ticket[]
   payouts          Payout[]
   notifications    Notification[]
+  wallets          UserWallet[]
 
   @@map("users")
+}
+
+/// Per-(user, chain, walletType) wallet record. A user can have many —
+/// one per chain they transact on (Base, Solana, etc) and/or one per
+/// custody type if they opt into a modular/passkey wallet later.
+/// See hostit skill §3B for the custody model.
+model UserWallet {
+  id                String                @id @default(uuid()) @db.Uuid
+  userId            String                @map("user_id") @db.Uuid
+  circleWalletId    String?               @unique @map("circle_wallet_id")
+  circleWalletSetId String?               @map("circle_wallet_set_id")
+  address           String?
+  chain             String
+  walletType        WalletType            @default(DEVELOPER_CONTROLLED) @map("wallet_type")
+  isPrimary         Boolean               @default(false) @map("is_primary")
+  creationStatus    WalletCreationStatus? @map("creation_status")
+  creationError     String?               @map("creation_error")
+  createdAt         DateTime              @default(now()) @map("created_at")
+  updatedAt         DateTime              @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, chain, walletType])
+  @@index([userId])
+  @@index([address])
+  @@map("user_wallets")
 }
 
 model OrganizerProfile {
