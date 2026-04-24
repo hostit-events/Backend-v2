@@ -6,4 +6,5 @@ export { default as paystackConfig } from './paystack.config';
 export { default as monnifyConfig } from './monnify.config';
 export { default as blockradarConfig } from './blockradar.config';
 export { default as blockchainConfig } from './blockchain.config';
+export { default as circleConfig } from './circle.config';
 export { envValidationSchema } from './env.validation';

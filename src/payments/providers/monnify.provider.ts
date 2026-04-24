@@ -274,10 +274,7 @@ export class MonnifyProvider implements IPaymentProvider {
 
   // ─────────────── http helpers ───────────────
 
-  private async authedRequest<T>(
-    path: string,
-    init?: RequestInit,
-  ): Promise<T> {
+  private async authedRequest<T>(path: string, init?: RequestInit): Promise<T> {
     const token = await this.getAccessToken();
     return this.request<T>(path, token, init);
   }

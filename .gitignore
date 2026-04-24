@@ -9,6 +9,11 @@ dist
 .env.*
 !.env.example
 
+# Circle — recovery files must NEVER be committed
+.circle/
+*-recovery-file.json
+recovery-file.json
+
 # Prisma
 prisma/*.db
 prisma/*.db-journal

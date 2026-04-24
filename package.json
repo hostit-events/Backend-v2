@@ -22,7 +22,10 @@
     "docker:down": "docker compose down",
     "prisma:migrate": "prisma migrate dev",
     "prisma:generate": "prisma generate",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "circle:generate-secret": "ts-node scripts/circle/generate-entity-secret.ts",
+    "circle:register-secret": "ts-node scripts/circle/register-entity-secret.ts",
+    "circle:bootstrap-wallet-set": "ts-node scripts/circle/bootstrap-wallet-set.ts"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
@@ -33,6 +36,7 @@
     ]
   },
   "dependencies": {
+    "@circle-fin/developer-controlled-wallets": "^10.3.0",
     "@nestjs/bullmq": "^11.0.4",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.3",

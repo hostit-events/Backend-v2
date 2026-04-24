@@ -16,10 +16,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { PaymentsService } from '../payments/payments.service';
 import { ConfigService } from '@nestjs/config';
 import { PurchaseTicketDto } from './dto/purchase-ticket.dto';
-import {
-  DEFAULT_FEE_BEARER,
-  PLATFORM_FEE_RATE,
-} from '../payments/constants';
+import { DEFAULT_FEE_BEARER, PLATFORM_FEE_RATE } from '../payments/constants';
 import type { PaymentSplit } from '../payments/interfaces/payment-provider.interface';
 import {
   generateTicketReference,
@@ -76,11 +73,10 @@ export class TicketsService {
       throw new BadRequestException('Sales window has closed');
     }
 
-    if (
-      ticketType.salesStartDate &&
-      now < ticketType.salesStartDate
-    ) {
-      throw new BadRequestException('Sales for this ticket type have not started');
+    if (ticketType.salesStartDate && now < ticketType.salesStartDate) {
+      throw new BadRequestException(
+        'Sales for this ticket type have not started',
+      );
     }
     if (ticketType.salesEndDate && now >= ticketType.salesEndDate) {
       throw new BadRequestException('Sales for this ticket type have ended');
@@ -167,7 +163,9 @@ export class TicketsService {
             provider: dto.paymentProvider,
             // Free events skip the gateway entirely; record the txn as
             // SUCCESS so the tickets can be confirmed in the same write.
-            status: isFree ? TransactionStatus.SUCCESS : TransactionStatus.PENDING,
+            status: isFree
+              ? TransactionStatus.SUCCESS
+              : TransactionStatus.PENDING,
             // Lock in the split at init so the invoice ledger reflects
             // exactly what we asked the gateway to do, even if commercial
             // terms or the platform rate change later.
