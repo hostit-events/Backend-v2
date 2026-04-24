@@ -11,4 +11,4 @@ export const PLATFORM_FEE_RATE = 0.03;
  * tiers (e.g. enterprise organizers who pay a flat platform fee that
  * includes gateway fees).
  */
-export const DEFAULT_FEE_BEARER: 'ORGANIZER' = 'ORGANIZER';
+export const DEFAULT_FEE_BEARER = 'ORGANIZER' as const;

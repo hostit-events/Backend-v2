@@ -104,18 +104,35 @@ enum KycStatus {
   REJECTED
 }
 
+// Wallet custody model. Default DEVELOPER_CONTROLLED — platform holds
+// keys for buyers + organizers (see hostit skill §3B.2). Future opt-in
+// upgrade path to USER_CONTROLLED / MODULAR for power-user organizers.
+enum WalletType {
+  DEVELOPER_CONTROLLED
+  USER_CONTROLLED
+  MODULAR
+}
+
+// Async wallet provisioning state. NULL until first enqueue (admin
+// users never enter the flow). FAILED surfaces to the admin retry
+// endpoint (#64).
+enum WalletCreationStatus {
+  PENDING
+  CREATED
+  FAILED
+}
+
 // ============ MODELS ============
 
 model User {
-  id                   String    @id @default(uuid()) @db.Uuid
-  email                String    @unique
-  password             String
-  firstName            String    @map("first_name")
-  lastName             String    @map("last_name")
-  phone                String?
-  role                 UserRole  @default(BUYER)
-  walletAddress        String?   @map("wallet_address")
-  blockradarAddressId  String?   @map("blockradar_address_id")
+  id        String   @id @default(uuid()) @db.Uuid
+  email     String   @unique
+  password  String
+  firstName String   @map("first_name")
+  lastName  String   @map("last_name")
+  phone     String?
+  role      UserRole @default(BUYER)
+
   passwordResetToken   String?   @map("password_reset_token")
   passwordResetExpires DateTime? @map("password_reset_expires")
   createdAt            DateTime  @default(now()) @map("created_at")
@@ -126,8 +143,35 @@ model User {
   tickets          Ticket[]
   payouts          Payout[]
   notifications    Notification[]
+  wallets          UserWallet[]
 
   @@map("users")
+}
+
+/// Per-(user, chain, walletType) wallet record. A user can have many —
+/// one per chain they transact on (Base, Solana, etc) and/or one per
+/// custody type if they opt into a modular/passkey wallet later.
+/// See hostit skill §3B for the custody model.
+model UserWallet {
+  id                String                @id @default(uuid()) @db.Uuid
+  userId            String                @map("user_id") @db.Uuid
+  circleWalletId    String?               @unique @map("circle_wallet_id")
+  circleWalletSetId String?               @map("circle_wallet_set_id")
+  address           String?
+  chain             String
+  walletType        WalletType            @default(DEVELOPER_CONTROLLED) @map("wallet_type")
+  isPrimary         Boolean               @default(false) @map("is_primary")
+  creationStatus    WalletCreationStatus? @map("creation_status")
+  creationError     String?               @map("creation_error")
+  createdAt         DateTime              @default(now()) @map("created_at")
+  updatedAt         DateTime              @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, chain, walletType])
+  @@index([userId])
+  @@index([address])
+  @@map("user_wallets")
 }
 
 model OrganizerProfile {
@@ -311,16 +355,25 @@ model Payout {
 }
 
 model BlockchainTransaction {
-  id        String             @id @default(uuid()) @db.Uuid
-  ticketId  String?            @map("ticket_id") @db.Uuid
-  eventId   String?            @map("event_id") @db.Uuid
-  txHash    String?            @map("tx_hash")
-  type      BlockchainTxType
-  status    BlockchainTxStatus @default(PENDING)
-  retries   Int                @default(0)
-  error     String?
-  createdAt DateTime           @default(now()) @map("created_at")
-  updatedAt DateTime           @updatedAt @map("updated_at")
+  id       String             @id @default(uuid()) @db.Uuid
+  ticketId String?            @map("ticket_id") @db.Uuid
+  eventId  String?            @map("event_id") @db.Uuid
+  txHash   String?            @map("tx_hash")
+  type     BlockchainTxType
+  status   BlockchainTxStatus @default(PENDING)
+  retries  Int                @default(0)
+  error    String?
+
+  // Circle reconciliation. `circleTransactionId` is the ID returned by
+  // Circle SCP execute calls and matched against transaction webhooks
+  // (see issues #65, #67). `chain` disambiguates rows during the
+  // Lisk → Base migration.
+  circleTransactionId String? @unique @map("circle_transaction_id")
+  circleWalletId      String? @map("circle_wallet_id")
+  chain               String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   ticket Ticket? @relation(fields: [ticketId], references: [id])
   event  Event?  @relation(fields: [eventId], references: [id])

@@ -28,7 +28,9 @@ export class PaymentsService {
    * Internal registry of wired providers. Populated as each provider
    * lands. Kept private so callers go through `resolveProvider`.
    */
-  private readonly providers: Partial<Record<PaymentProvider, IPaymentProvider>>;
+  private readonly providers: Partial<
+    Record<PaymentProvider, IPaymentProvider>
+  >;
 
   constructor(paystack: PaystackProvider, monnify: MonnifyProvider) {
     this.providers = {
