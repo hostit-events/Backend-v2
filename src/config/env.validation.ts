@@ -51,6 +51,8 @@ export const envValidationSchema = Joi.object({
   CIRCLE_API_KEY: Joi.string().required(),
   CIRCLE_ENTITY_SECRET: Joi.string().length(64).hex().required(),
   CIRCLE_WALLET_SET_ID: Joi.string().uuid().required(),
+  CIRCLE_TREASURY_WALLET_SET_ID: Joi.string().uuid().required(),
+  CIRCLE_TREASURY_WALLET_ID: Joi.string().uuid().required(),
   CIRCLE_ENVIRONMENT: Joi.string()
     .valid('sandbox', 'production')
     .default('sandbox'),

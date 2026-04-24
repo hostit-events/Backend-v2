@@ -25,7 +25,8 @@
     "prisma:studio": "prisma studio",
     "circle:generate-secret": "ts-node scripts/circle/generate-entity-secret.ts",
     "circle:register-secret": "ts-node scripts/circle/register-entity-secret.ts",
-    "circle:bootstrap-wallet-set": "ts-node scripts/circle/bootstrap-wallet-set.ts"
+    "circle:bootstrap-wallet-set": "ts-node scripts/circle/bootstrap-wallet-set.ts",
+    "circle:bootstrap-treasury": "ts-node scripts/circle/bootstrap-treasury.ts"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

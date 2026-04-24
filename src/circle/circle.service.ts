@@ -36,6 +36,14 @@ export class CircleService implements OnModuleInit {
     return this.config.getOrThrow<string>('circle.walletSetId');
   }
 
+  get treasuryWalletSetId(): string {
+    return this.config.getOrThrow<string>('circle.treasuryWalletSetId');
+  }
+
+  get treasuryWalletId(): string {
+    return this.config.getOrThrow<string>('circle.treasuryWalletId');
+  }
+
   get defaultChain(): string {
     return this.config.getOrThrow<string>('circle.defaultChain');
   }
