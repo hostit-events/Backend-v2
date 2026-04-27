@@ -34,16 +34,27 @@ The **treasury wallet** signs every platform-side on-chain operation HostIT perf
 
 4. **Fund the new wallet.** Transfer a small USDC + ETH buffer to the new address. On Base testnet, use the Base Sepolia faucet + a Circle sandbox USDC faucet.
 
-5. **Grant roles on the Diamond.** From the contract owner account (not Circle), call:
+5. **Carry over admin roles for existing tickets.**
 
-   ```solidity
-   // For every active ticket, the per-ticket role keys apply. See
-   // OwnableRoles usage in the Diamond — roles are XOR'd with ticket ID.
-   diamond.grantRoles(NEW_TREASURY_ADDRESS, mainAdminRoleForTicket(ticketId));
-   diamond.grantRoles(NEW_TREASURY_ADDRESS, ticketAdminRoleForTicket(ticketId));
-   ```
+   Per-ticket `mainAdminRole` is auto-granted to whoever calls
+   `createTicket`, so the **new** treasury becomes the main admin on
+   any future tickets it creates with no extra step. For tickets that
+   already exist (created by the **old** treasury), you have two
+   options depending on what the new treasury needs to do:
+   - **Check-ins only**: call `CheckInFacet.addTicketAdmins(ticketId, [NEW_TREASURY])`
+     for each ticket — the new treasury joins the per-ticket admin set.
+     Optionally revoke the old via `removeTicketAdmins` once verified.
+   - **Full main-admin power** (set fees, withdraw ticket balance,
+     manage admins): the old treasury keeps `mainAdminRole` on tickets
+     it created — there's no in-contract handover. Either accept that
+     legacy tickets stay administered by the old wallet (lowest risk)
+     or, from the contract owner key, call OwnableRoles `grantRoles`
+     directly to mint the per-ticket main-admin role to the new
+     wallet. This requires the OwnableRoles ABI (not currently bundled
+     in `src/blockchain/abis/`).
 
-   For platform-level admin (`withdrawHostItBalance`), grant the top-level owner role if required by your deployment.
+   For platform-level admin (`withdrawHostItBalance`), grant the
+   top-level owner role from the contract-owner key if required.
 
 6. **Restart the app.** Nest validates the new env and signs new transactions with the new wallet.
 
