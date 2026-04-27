@@ -26,7 +26,9 @@
     "circle:generate-secret": "ts-node scripts/circle/generate-entity-secret.ts",
     "circle:register-secret": "ts-node scripts/circle/register-entity-secret.ts",
     "circle:bootstrap-wallet-set": "ts-node scripts/circle/bootstrap-wallet-set.ts",
-    "circle:bootstrap-treasury": "ts-node scripts/circle/bootstrap-treasury.ts"
+    "circle:bootstrap-treasury": "ts-node scripts/circle/bootstrap-treasury.ts",
+    "blockchain:smoke": "ts-node scripts/blockchain/smoke-diamond.ts",
+    "blockchain:smoke-execute": "ts-node scripts/blockchain/smoke-circle-execute.ts"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

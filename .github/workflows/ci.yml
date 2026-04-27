@@ -23,6 +23,10 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+      # @prisma/client must be generated for typed-aware lint rules to
+      # see Prisma exports as their actual types (otherwise enums fall
+      # back to `any` and trip no-redundant-type-constituents).
+      - run: pnpm prisma:generate
       - run: pnpm run lint
 
   build:
