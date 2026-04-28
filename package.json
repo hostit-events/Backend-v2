@@ -28,7 +28,9 @@
     "circle:bootstrap-wallet-set": "ts-node scripts/circle/bootstrap-wallet-set.ts",
     "circle:bootstrap-treasury": "ts-node scripts/circle/bootstrap-treasury.ts",
     "blockchain:smoke": "ts-node scripts/blockchain/smoke-diamond.ts",
-    "blockchain:smoke-execute": "ts-node scripts/blockchain/smoke-circle-execute.ts"
+    "blockchain:smoke-execute": "ts-node scripts/blockchain/smoke-circle-execute.ts",
+    "blockchain:inspect": "ts-node scripts/blockchain/inspect-ticket.ts",
+    "blockchain:buy-ticket": "ts-node scripts/blockchain/buy-ticket.ts"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
