@@ -120,6 +120,7 @@ jobs:
       TWILIO_ACCOUNT_SID: ACci_test
       TWILIO_AUTH_TOKEN: ci_token
       TWILIO_PHONE_NUMBER: "+1234567890"
+      TICKET_QR_SIGNING_SECRET: ci_qr_signing_secret_must_be_at_least_32_bytes
 
     steps:
       - uses: actions/checkout@v4

@@ -91,4 +91,9 @@ export const envValidationSchema = Joi.object({
   TWILIO_ACCOUNT_SID: Joi.string().required(),
   TWILIO_AUTH_TOKEN: Joi.string().required(),
   TWILIO_PHONE_NUMBER: Joi.string().required(),
+
+  // Ticket QR signing — HMAC-SHA256 over the encoded payload. Generate
+  // with `openssl rand -hex 32`. Rotation invalidates every issued QR;
+  // we'll add key rotation with a versioned prefix when needed.
+  TICKET_QR_SIGNING_SECRET: Joi.string().min(32).required(),
 });
