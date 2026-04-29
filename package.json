@@ -28,7 +28,9 @@
     "circle:bootstrap-wallet-set": "ts-node scripts/circle/bootstrap-wallet-set.ts",
     "circle:bootstrap-treasury": "ts-node scripts/circle/bootstrap-treasury.ts",
     "blockchain:smoke": "ts-node scripts/blockchain/smoke-diamond.ts",
-    "blockchain:smoke-execute": "ts-node scripts/blockchain/smoke-circle-execute.ts"
+    "blockchain:smoke-execute": "ts-node scripts/blockchain/smoke-circle-execute.ts",
+    "blockchain:inspect": "ts-node scripts/blockchain/inspect-ticket.ts",
+    "blockchain:buy-ticket": "ts-node scripts/blockchain/buy-ticket.ts"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
@@ -63,6 +65,7 @@
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "pg": "^8.20.0",
+    "qrcode": "^1.5.4",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "uuid": "^13.0.0"
@@ -78,6 +81,7 @@
     "@types/jest": "^30.0.0",
     "@types/node": "^22.10.7",
     "@types/passport-jwt": "^4.0.1",
+    "@types/qrcode": "^1.5.6",
     "@types/supertest": "^6.0.2",
     "@types/uuid": "^11.0.0",
     "eslint": "^9.18.0",

@@ -96,7 +96,14 @@ jobs:
       BLOCKRADAR_API_KEY: br_test_ci
       BLOCKRADAR_MASTER_WALLET_ID: wal_ci
       BLOCKRADAR_BASE_URL: https://api.blockradar.co/v1
-      BLOCKCHAIN_RPC_URL: https://rpc.sepolia-api.lisk.com
+      # Multi-chain registry (#33). BlockchainHealthIndicator skips
+      # live RPC calls under NODE_ENV=test, so dummy values here only
+      # need to satisfy validation + chains.config.ts loader.
+      ACTIVE_CHAINS: BASE-SEPOLIA
+      BASE_SEPOLIA_RPC_URL: https://sepolia.base.org
+      BASE_SEPOLIA_DIAMOND_ADDRESS: "0x0000000000000000000000000000000000000000"
+      # Legacy vars — still consumed by smoke scripts and CircleContractService.
+      BLOCKCHAIN_RPC_URL: https://sepolia.base.org
       DIAMOND_CONTRACT_ADDRESS: "0x0000000000000000000000000000000000000000"
       PLATFORM_PRIVATE_KEY: "0x0000000000000000000000000000000000000000000000000000000000000001"
       # Circle — dummies only; CircleHealthIndicator skips live calls when NODE_ENV=test
@@ -113,6 +120,7 @@ jobs:
       TWILIO_ACCOUNT_SID: ACci_test
       TWILIO_AUTH_TOKEN: ci_token
       TWILIO_PHONE_NUMBER: "+1234567890"
+      TICKET_QR_SIGNING_SECRET: ci_qr_signing_secret_must_be_at_least_32_bytes
 
     steps:
       - uses: actions/checkout@v4

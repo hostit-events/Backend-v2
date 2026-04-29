@@ -58,10 +58,30 @@ export const envValidationSchema = Joi.object({
     .default('sandbox'),
   CIRCLE_DEFAULT_CHAIN: Joi.string().default('BASE-SEPOLIA'),
 
-  // Blockchain
-  BLOCKCHAIN_RPC_URL: Joi.string().uri().required(),
-  DIAMOND_CONTRACT_ADDRESS: Joi.string().required(),
-  PLATFORM_PRIVATE_KEY: Joi.string().required(),
+  // Blockchain — multi-chain registry. ACTIVE_CHAINS is the comma-
+  // separated list of chain ids the backend is allowed to use; each
+  // active chain requires its own *_RPC_URL and *_DIAMOND_ADDRESS
+  // pair. Joi can't conditionally require pairs based on list contents,
+  // so we mark them all optional here and let chains.config.ts throw a
+  // clear error at first use if an active chain is missing config.
+  ACTIVE_CHAINS: Joi.string().default('BASE-SEPOLIA'),
+  BASE_SEPOLIA_RPC_URL: Joi.string().uri().optional(),
+  BASE_SEPOLIA_DIAMOND_ADDRESS: Joi.string()
+    .pattern(/^0x[0-9a-fA-F]{40}$/)
+    .optional(),
+  BASE_RPC_URL: Joi.string().uri().optional(),
+  BASE_DIAMOND_ADDRESS: Joi.string()
+    .pattern(/^0x[0-9a-fA-F]{40}$/)
+    .optional(),
+
+  // Legacy single-chain vars — being phased out in favour of the
+  // per-chain registry above. Kept optional so existing scripts and
+  // .env files continue working through the transition. Remove once
+  // all consumers (#34-#37 Bull queues, smoke scripts, CI) are
+  // ported to the registry.
+  BLOCKCHAIN_RPC_URL: Joi.string().uri().optional(),
+  DIAMOND_CONTRACT_ADDRESS: Joi.string().optional(),
+  PLATFORM_PRIVATE_KEY: Joi.string().optional(),
 
   // SendGrid
   SENDGRID_API_KEY: Joi.string().required(),
@@ -71,4 +91,9 @@ export const envValidationSchema = Joi.object({
   TWILIO_ACCOUNT_SID: Joi.string().required(),
   TWILIO_AUTH_TOKEN: Joi.string().required(),
   TWILIO_PHONE_NUMBER: Joi.string().required(),
+
+  // Ticket QR signing — HMAC-SHA256 over the encoded payload. Generate
+  // with `openssl rand -hex 32`. Rotation invalidates every issued QR;
+  // we'll add key rotation with a versioned prefix when needed.
+  TICKET_QR_SIGNING_SECRET: Joi.string().min(32).required(),
 });
