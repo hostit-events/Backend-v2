@@ -447,26 +447,45 @@ export class EventsService {
       throw new BadRequestException('Event must have at least one ticket type');
     }
 
-    // Generate symbol from name (e.g., "Lagos Tech Summit 2026" -> "LTS26")
-    const symbol = event.name
+    // Generate a per-event symbol prefix from the event name
+    // (e.g., "Lagos Tech Summit 2026" -> "LTS26").
+    const eventSymbol = event.name
       .split(/\s+/)
       .map((w) => w[0])
       .join('')
       .toUpperCase()
       .slice(0, 6);
 
-    // Calculate aggregate values for smart contract
-    const maxTickets = event.ticketTypes.reduce(
-      (sum, tt) => sum + tt.quantity,
-      0,
-    );
-    const maxTicketsPerUser = Math.max(
-      ...event.ticketTypes.map((tt) => tt.maxPerUser),
-    );
+    // Each ticket type becomes its own on-chain entry — one createTicket
+    // call per type. Build the per-type payloads + pre-create one
+    // BlockchainTransaction row per type so the worker can attach the
+    // Circle transactionId to the right row when it runs.
+    const ticketTypePayloads = event.ticketTypes.map((tt) => ({
+      ticketTypeId: tt.id,
+      ticketData: {
+        startTime: Math.floor(event.startTime.getTime() / 1000),
+        endTime: Math.floor(event.endTime.getTime() / 1000),
+        purchaseStartTime: Math.floor(event.purchaseStartTime.getTime() / 1000),
+        maxTickets: tt.quantity,
+        maxTicketsPerUser: tt.maxPerUser,
+        isFree: event.isFree,
+        isRefundable: event.isRefundable,
+        name: `${event.name} — ${tt.name}`,
+        symbol: `${eventSymbol}-${tt.name.replace(/\s+/g, '').slice(0, 4).toUpperCase()}`,
+        uri: `https://api.hostit.ng/events/${event.slug}/${tt.id}/metadata`,
+      },
+      // Placeholder — proper organizer-selected fee types + crypto-
+      // denominated prices land in a follow-up DTO/UI PR. For now every
+      // type defaults to ETH at the (incorrect) fiat-amount-as-wei value.
+      // Safe to ship because the on-chain mint flow isn't user-facing
+      // yet; we'll fix prices before the first real organizer publishes.
+      feeTypes: ['ETH'],
+      prices: [tt.price.toString()],
+    }));
 
-    // Update status and create blockchain transaction
-    const [updatedEvent, blockchainTx] = await this.prisma.$transaction([
-      this.prisma.event.update({
+    // Atomic transition + per-type BlockchainTransaction rows
+    const updatedEvent = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.event.update({
         where: { id: eventId },
         data: { status: EventStatus.PUBLISHED },
         include: {
@@ -475,38 +494,43 @@ export class EventsService {
             select: { id: true, firstName: true, lastName: true },
           },
         },
-      }),
-      this.prisma.blockchainTransaction.create({
-        data: {
-          eventId,
-          type: BlockchainTxType.CREATE_EVENT,
-          status: BlockchainTxStatus.PENDING,
-        },
-      }),
-    ]);
+      });
 
-    // Queue on-chain creation (processor built in Phase 6)
-    await this.eventPublishQueue.add('create-event', {
-      eventId,
-      blockchainTxId: blockchainTx.id,
-      ticketData: {
-        startTime: Math.floor(event.startTime.getTime() / 1000),
-        endTime: Math.floor(event.endTime.getTime() / 1000),
-        purchaseStartTime: Math.floor(event.purchaseStartTime.getTime() / 1000),
-        maxTickets,
-        maxTicketsPerUser,
-        isFree: event.isFree,
-        isRefundable: event.isRefundable,
-        name: event.name,
-        symbol,
-        uri: `https://api.hostit.ng/events/${event.slug}/metadata`,
-      },
-      feeTypes: event.ticketTypes.map(() => 'ETH'),
-      prices: event.ticketTypes.map((tt) => tt.price.toString()),
+      // Create one BlockchainTransaction row per ticket type, then
+      // capture the IDs so we can attach them to job payloads below.
+      // Loop is sequential (small N: usually 1-5 ticket types per event).
+      for (const payload of ticketTypePayloads) {
+        const btx = await tx.blockchainTransaction.create({
+          data: {
+            eventId,
+            type: BlockchainTxType.CREATE_EVENT,
+            status: BlockchainTxStatus.PENDING,
+            chain: event.chain,
+          },
+        });
+        // Stash the row id back onto the payload for the enqueue loop
+        (payload as { blockchainTxId?: string }).blockchainTxId = btx.id;
+      }
+
+      return updated;
     });
 
+    // Enqueue one job per ticket type — each one independent, retryable
+    // on its own. Workers in BlockchainModule consume `event-publish`.
+    for (const payload of ticketTypePayloads) {
+      await this.eventPublishQueue.add('create-event', {
+        eventId,
+        chain: event.chain,
+        ticketTypeId: payload.ticketTypeId,
+        blockchainTxId: (payload as { blockchainTxId?: string }).blockchainTxId,
+        ticketData: payload.ticketData,
+        feeTypes: payload.feeTypes,
+        prices: payload.prices,
+      });
+    }
+
     this.logger.log(
-      `Event published: ${updatedEvent.name} (${updatedEvent.slug})`,
+      `Event published: ${updatedEvent.name} (${updatedEvent.slug}) — ${ticketTypePayloads.length} on-chain entries queued on ${event.chain}`,
     );
 
     return {
