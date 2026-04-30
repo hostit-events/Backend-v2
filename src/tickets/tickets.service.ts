@@ -60,6 +60,19 @@ export class TicketsService {
       throw new BadRequestException('Event is not open for sales');
     }
 
+    // Country-aware provider eligibility — buyer can't pick a provider
+    // that doesn't serve this event's country, and crypto can't be
+    // chosen for events that opted out. Crypto + Blockradar both go
+    // through the acceptsCrypto gate.
+    this.payments.assertEligible(
+      {
+        country: event.country,
+        currency: event.currency,
+        acceptsCrypto: event.acceptsCrypto,
+      },
+      dto.paymentProvider,
+    );
+
     const ticketType = event.ticketTypes[0];
     if (!ticketType) {
       throw new NotFoundException('Ticket type not found for this event');
