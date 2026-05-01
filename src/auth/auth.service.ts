@@ -262,7 +262,7 @@ export class AuthService {
     return result;
   }
 
-  async becomeOrganizer(userId: string, dto: BecomeOrganizerDto) {
+  async becomeOrganizer(userId: string, _dto: BecomeOrganizerDto) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: { organizerProfile: true },
@@ -280,96 +280,13 @@ export class AuthService {
       throw new ConflictException('Organizer profile already exists');
     }
 
-    // Verify BVN via Paystack. Paystack's BVN endpoint is a NIBSS
-    // passthrough that's typically not provisioned on test accounts —
-    // setting `SKIP_BVN_VERIFICATION=true` bypasses the call so the
-    // rest of the organizer flow is testable in dev. Production env
-    // validation should reject this flag.
-    const skipBvn =
-      this.configService.get<string>('SKIP_BVN_VERIFICATION') === 'true' &&
-      this.configService.get<string>('NODE_ENV') !== 'production';
-
-    let bvnData: { bvn: string; firstName: string; lastName: string };
-    if (skipBvn) {
-      this.logger.warn(
-        `[DEV] Skipping BVN verification for user ${userId} (SKIP_BVN_VERIFICATION=true)`,
-      );
-      bvnData = { bvn: dto.bvn, firstName: 'Dev', lastName: 'Bypass' };
-    } else {
-      try {
-        bvnData = await this.paystackService.resolveBvn(dto.bvn);
-      } catch {
-        throw new BadRequestException('BVN verification failed');
-      }
-    }
-
-    // Verify bank account via Paystack. Skipped in dev when
-    // SKIP_BANK_VERIFICATION=true — the Paystack and Monnify sandboxes
-    // accept mutually exclusive test bank data, so doing the upfront
-    // check blocks the other provider's sub-account creation. With the
-    // flag on, we trust user-provided values and let each provider's
-    // sub-account-create call validate independently.
-    const skipBank =
-      this.configService.get<string>('SKIP_BANK_VERIFICATION') === 'true' &&
-      this.configService.get<string>('NODE_ENV') !== 'production';
-
-    let bankData: { accountNumber: string; accountName: string };
-    if (skipBank) {
-      this.logger.warn(
-        `[DEV] Skipping bank verification for user ${userId} (SKIP_BANK_VERIFICATION=true)`,
-      );
-      bankData = {
-        accountNumber: dto.accountNumber,
-        accountName: `${user.firstName} ${user.lastName}`.toUpperCase(),
-      };
-    } else {
-      try {
-        bankData = await this.paystackService.resolveBankAccount(
-          dto.accountNumber,
-          dto.bankCode,
-        );
-      } catch {
-        throw new BadRequestException('Bank account verification failed');
-      }
-    }
-
-    // Create the Paystack and Monnify subaccounts that will receive
-    // this organizer's settlement payouts. Both calls are non-blocking
-    // — provider outages shouldn't stop role upgrade. Admin can retry
-    // via a backfill endpoint later (PR follow-up). Run in parallel
-    // since they're independent and we don't want to double the
-    // /become-organizer latency for the happy path.
-    const [paystackResult, monnifyResult] = await Promise.allSettled([
-      this.paystackService.createSubaccount({
-        businessName: bankData.accountName,
-        bankCode: dto.bankCode,
-        accountNumber: bankData.accountNumber,
-      }),
-      this.monnifyProvider.createSubAccount({
-        bankCode: dto.bankCode,
-        accountNumber: bankData.accountNumber,
-        email: user.email,
-      }),
-    ]);
-
-    const paystackSubaccount =
-      paystackResult.status === 'fulfilled' ? paystackResult.value : null;
-    if (paystackResult.status === 'rejected') {
-      this.logger.warn(
-        `Paystack subaccount creation failed for user ${userId}: ${(paystackResult.reason as Error).message}`,
-      );
-    }
-
-    const monnifySubAccount =
-      monnifyResult.status === 'fulfilled' ? monnifyResult.value : null;
-    if (monnifyResult.status === 'rejected') {
-      this.logger.warn(
-        `Monnify sub-account creation failed for user ${userId}: ${(monnifyResult.reason as Error).message}`,
-      );
-    }
-
-    // Create organizer profile and upgrade role in a transaction
-    const [_updatedUser, organizerProfile] = await this.prisma.$transaction([
+    // No KYC upfront — organizers can immediately create crypto-only
+    // events. KYC + bank verification + provider subaccount setup
+    // happens just-in-time when an organizer enables a fiat provider
+    // for a country (see OrganizerController.enablePaystack /
+    // .enableMonnify). At that point we collect BVN/NIN/etc. and
+    // populate the corresponding fields on this profile.
+    const [, organizerProfile] = await this.prisma.$transaction([
       this.prisma.user.update({
         where: { id: userId },
         data: { role: UserRole.ORGANIZER },
@@ -377,26 +294,13 @@ export class AuthService {
       this.prisma.organizerProfile.create({
         data: {
           userId,
-          bvn: dto.bvn,
-          bvnVerified: true,
-          bankCode: dto.bankCode,
-          accountNumber: bankData.accountNumber,
-          accountName: bankData.accountName,
-          bankName: bvnData.firstName, // Will be replaced with actual bank name lookup
-          bankVerified: true,
-          kycTier: 'BASIC',
-          kycStatus: 'VERIFIED',
-          paystackSubaccountCode: paystackSubaccount?.subaccountCode ?? null,
-          paystackSubaccountId:
-            paystackSubaccount?.id != null
-              ? String(paystackSubaccount.id)
-              : null,
-          monnifySubAccountCode: monnifySubAccount?.subAccountCode ?? null,
+          // Everything else is null/default — populated per-provider
+          // when the organizer opts into fiat for a country.
         },
       }),
     ]);
 
-    this.logger.log(`User ${userId} upgraded to ORGANIZER`);
+    this.logger.log(`User ${userId} upgraded to ORGANIZER (no KYC required)`);
 
     const {
       bvn: _bvn,
@@ -409,7 +313,9 @@ export class AuthService {
       message: 'Successfully upgraded to organizer',
       organizerProfile: {
         ...profileData,
-        accountNumber: this.maskAccountNumber(profileData.accountNumber!),
+        accountNumber: profileData.accountNumber
+          ? this.maskAccountNumber(profileData.accountNumber)
+          : null,
       },
     };
   }

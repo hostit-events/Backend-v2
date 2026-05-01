@@ -5,6 +5,7 @@ import { BlockchainTxStatus, BlockchainTxType } from '@prisma/client';
 import { CircleService } from '../circle/circle.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { diamondAbi } from './abis';
+import { getChain } from './chains.config';
 
 export type FeeLevel = 'LOW' | 'MEDIUM' | 'HIGH';
 
@@ -20,6 +21,14 @@ export interface ExecuteContractParams {
   txType: BlockchainTxType;
   ticketId?: string;
   eventId?: string;
+  /** Chain id (e.g. "BASE-SEPOLIA"). Defaults to the legacy single-chain
+   *  config for backwards compatibility — new callers should always pass
+   *  this explicitly so multi-chain dispatch works. */
+  chain?: string;
+  /** When provided, attach the result to an existing pending
+   *  BlockchainTransaction row instead of creating a new one. Used by
+   *  workers that pre-record the queued transaction at enqueue time. */
+  existingBlockchainTransactionId?: string;
 }
 
 export interface ExecuteContractResult {
@@ -78,7 +87,8 @@ export class CircleContractService {
       params.method,
       params.args,
     );
-    const contractAddress = this.diamondAddress();
+    const chain = params.chain ?? this.circle.defaultChain;
+    const contractAddress = this.resolveDiamondAddress(chain);
 
     const response =
       await this.circle.client.createContractExecutionTransaction({
@@ -100,20 +110,29 @@ export class CircleContractService {
       );
     }
 
-    const tx = await this.prisma.blockchainTransaction.create({
-      data: {
-        type: params.txType,
-        status: BlockchainTxStatus.PENDING,
-        circleTransactionId,
-        circleWalletId: this.circle.treasuryWalletId,
-        chain: this.circle.defaultChain,
-        ticketId: params.ticketId,
-        eventId: params.eventId,
-      },
-    });
+    const tx = params.existingBlockchainTransactionId
+      ? await this.prisma.blockchainTransaction.update({
+          where: { id: params.existingBlockchainTransactionId },
+          data: {
+            circleTransactionId,
+            circleWalletId: this.circle.treasuryWalletId,
+            chain,
+          },
+        })
+      : await this.prisma.blockchainTransaction.create({
+          data: {
+            type: params.txType,
+            status: BlockchainTxStatus.PENDING,
+            circleTransactionId,
+            circleWalletId: this.circle.treasuryWalletId,
+            chain,
+            ticketId: params.ticketId,
+            eventId: params.eventId,
+          },
+        });
 
     this.logger.log(
-      `Submitted ${params.method} via Circle (txId=${circleTransactionId}, blockchainTxId=${tx.id})`,
+      `Submitted ${params.method} via Circle (chain=${chain}, txId=${circleTransactionId}, blockchainTxId=${tx.id})`,
     );
 
     return {
@@ -127,12 +146,14 @@ export class CircleContractService {
     method: string,
     args: unknown[],
     amount?: string,
+    chain?: string,
   ): Promise<FeeEstimate> {
     const { signature, abiParameters } = this.encode(method, args);
+    const targetChain = chain ?? this.circle.defaultChain;
 
     const response = await this.circle.client.estimateContractExecutionFee({
       source: { walletId: this.circle.treasuryWalletId },
-      contractAddress: this.diamondAddress(),
+      contractAddress: this.resolveDiamondAddress(targetChain),
       abiFunctionSignature: signature,
       abiParameters,
       amount,
@@ -204,8 +225,25 @@ export class CircleContractService {
 
   // ---------- internals ----------
 
-  private diamondAddress(): string {
-    return this.config.getOrThrow<string>('blockchain.diamondAddress');
+  /**
+   * Resolve a Diamond address for a given chain.
+   *
+   * Prefers the chains.config registry (the multi-chain source of truth
+   * post-#33). Falls back to the legacy single-chain
+   * `blockchain.diamondAddress` env var so smoke scripts that haven't
+   * migrated keep working — drop the fallback once all callers pass
+   * `chain` explicitly.
+   */
+  private resolveDiamondAddress(chain: string): string {
+    try {
+      return getChain(chain).diamondAddress;
+    } catch {
+      const legacy = this.config.get<string>('blockchain.diamondAddress');
+      if (legacy) return legacy;
+      throw new Error(
+        `No Diamond address configured for chain ${chain}. Either add it to ACTIVE_CHAINS or set DIAMOND_CONTRACT_ADDRESS.`,
+      );
+    }
   }
 
   private encode(
