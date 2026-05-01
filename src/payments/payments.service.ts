@@ -19,11 +19,19 @@ import {
 import { MonnifyProvider } from './providers/monnify.provider';
 import { PaystackProvider } from './providers/paystack.provider';
 
-/** Subset of Event that drives payment-method eligibility. */
+/** Subset of Event + organizer state that drives payment-method eligibility. */
 export interface EventPaymentContext {
   country: string;
   currency: string;
   acceptsCrypto: boolean;
+  /**
+   * Providers the event's organizer has actually enabled (KYC + bank +
+   * subaccount complete). When omitted, every country-eligible provider
+   * is shown — useful for unit tests but production callers should
+   * always pass this so buyers don't see Paystack for an organizer
+   * who never completed enable-paystack.
+   */
+  enabledFiatProviders?: PaymentProvider[];
 }
 
 export type PaymentMethodOption =
@@ -109,7 +117,17 @@ export class PaymentsService {
    * accepts crypto; returns fiat + (optional) crypto otherwise.
    */
   listMethods(event: EventPaymentContext): PaymentMethodList {
-    const fiatProviders = fiatProvidersForCountry(event.country);
+    const countryProviders = fiatProvidersForCountry(event.country);
+
+    // Intersect with the organizer's actually-enabled providers when
+    // the caller scoped the filter. Without it, we fall back to every
+    // country-eligible provider — useful for unit tests, not for
+    // production checkout flows.
+    const fiatProviders = event.enabledFiatProviders
+      ? countryProviders.filter((p) =>
+          event.enabledFiatProviders!.includes(p.id),
+        )
+      : countryProviders;
 
     const methods: PaymentMethodOption[] = fiatProviders.map((p) =>
       this.toFiatOption(p),
@@ -149,11 +167,27 @@ export class PaymentsService {
       return;
     }
 
-    const eligible = fiatProvidersForCountry(event.country).map((p) => p.id);
-    if (!eligible.includes(provider)) {
+    const countryEligible = fiatProvidersForCountry(event.country).map(
+      (p) => p.id,
+    );
+    if (!countryEligible.includes(provider)) {
       throw new BadRequestException(
         `${provider} is not available for events in ${event.country}. ` +
-          `Eligible: ${eligible.length ? eligible.join(', ') : 'none — crypto only'}`,
+          `Eligible: ${countryEligible.length ? countryEligible.join(', ') : 'none — crypto only'}`,
+      );
+    }
+
+    // Defense-in-depth: even if the country supports the provider, the
+    // organizer must have completed enable for it. listMethods already
+    // hides un-enabled providers from the buyer UI, but a hand-crafted
+    // request shouldn't sneak past that filter.
+    if (
+      event.enabledFiatProviders &&
+      !event.enabledFiatProviders.includes(provider)
+    ) {
+      throw new BadRequestException(
+        `The organizer has not enabled ${provider} for this event. ` +
+          `Enabled: ${event.enabledFiatProviders.length ? event.enabledFiatProviders.join(', ') : 'none — crypto only'}`,
       );
     }
   }

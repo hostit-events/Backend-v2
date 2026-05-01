@@ -61,14 +61,23 @@ export class TicketsService {
     }
 
     // Country-aware provider eligibility — buyer can't pick a provider
-    // that doesn't serve this event's country, and crypto can't be
-    // chosen for events that opted out. Crypto + Blockradar both go
-    // through the acceptsCrypto gate.
+    // that doesn't serve this event's country, can't pick crypto for
+    // events that opted out, and can't pick a fiat provider the
+    // organizer hasn't completed enable for.
+    const profile = event.organizer.organizerProfile;
+    const enabledFiatProviders: PaymentProvider[] = [];
+    if (profile?.paystackSubaccountCode) {
+      enabledFiatProviders.push(PaymentProvider.PAYSTACK);
+    }
+    if (profile?.monnifySubAccountCode) {
+      enabledFiatProviders.push(PaymentProvider.MONNIFY);
+    }
     this.payments.assertEligible(
       {
         country: event.country,
         currency: event.currency,
         acceptsCrypto: event.acceptsCrypto,
+        enabledFiatProviders,
       },
       dto.paymentProvider,
     );

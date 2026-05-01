@@ -414,7 +414,10 @@ export class EventsService {
   async publish(eventId: string, organizerId: string) {
     const event = await this.prisma.event.findUnique({
       where: { id: eventId },
-      include: { ticketTypes: true },
+      include: {
+        ticketTypes: true,
+        organizer: { include: { organizerProfile: true } },
+      },
     });
 
     if (!event) {
@@ -427,6 +430,24 @@ export class EventsService {
 
     if (event.status !== EventStatus.DRAFT) {
       throw new BadRequestException('Only DRAFT events can be published');
+    }
+
+    // JIT-KYC gate: an event must reach buyers via at least one
+    // payment lane. Crypto-only is allowed when acceptsCrypto=true; in
+    // every other case the organizer needs at least one fiat provider
+    // enabled for the event's country (Paystack/Monnify subaccount on
+    // OrganizerProfile). Per-provider enable lives in OrganizerController.
+    const profile = event.organizer.organizerProfile;
+    const hasPaystack = !!profile?.paystackSubaccountCode;
+    const hasMonnify = !!profile?.monnifySubAccountCode;
+    const hasFiat = hasPaystack || hasMonnify;
+
+    if (!event.acceptsCrypto && !hasFiat) {
+      throw new BadRequestException(
+        'This event has no payment method available. Either enable a fiat ' +
+          'provider via /api/organizer/providers/{paystack,monnify}/enable, ' +
+          'or set acceptsCrypto=true on the event.',
+      );
     }
 
     // Validate completeness

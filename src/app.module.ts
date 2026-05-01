@@ -13,6 +13,7 @@ import { PaymentsModule } from './payments/payments.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { BlockchainModule } from './blockchain/blockchain.module';
 import { CircleModule } from './circle/circle.module';
+import { OrganizerModule } from './organizer/organizer.module';
 import { WalletsModule } from './wallets/wallets.module';
 import { TicketsModule } from './tickets/tickets.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
@@ -70,6 +71,7 @@ import {
     AuthModule,
     EventsModule,
     PaymentsModule,
+    OrganizerModule,
     BlockchainModule,
     WebhooksModule,
     TicketsModule,

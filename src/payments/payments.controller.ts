@@ -6,6 +6,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { PaymentProvider } from '@prisma/client';
 import { Public } from '../common/decorators/public.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaymentsService } from './payments.service';
@@ -37,11 +38,39 @@ export class PaymentsController {
         country: true,
         currency: true,
         acceptsCrypto: true,
+        organizer: {
+          select: {
+            organizerProfile: {
+              select: {
+                paystackSubaccountCode: true,
+                monnifySubAccountCode: true,
+              },
+            },
+          },
+        },
       },
     });
     if (!event) {
       throw new NotFoundException('Event not found');
     }
-    return this.payments.listMethods(event);
+
+    // Determine which fiat providers this organizer has actually
+    // completed enable for. Buyers should only ever see providers
+    // backed by a real subaccount.
+    const profile = event.organizer.organizerProfile;
+    const enabledFiatProviders: PaymentProvider[] = [];
+    if (profile?.paystackSubaccountCode) {
+      enabledFiatProviders.push(PaymentProvider.PAYSTACK);
+    }
+    if (profile?.monnifySubAccountCode) {
+      enabledFiatProviders.push(PaymentProvider.MONNIFY);
+    }
+
+    return this.payments.listMethods({
+      country: event.country,
+      currency: event.currency,
+      acceptsCrypto: event.acceptsCrypto,
+      enabledFiatProviders,
+    });
   }
 }
