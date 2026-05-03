@@ -1,98 +1,206 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# HostIT v2 Backend
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+A Web3 event ticketing platform — organizers create events, sell tickets that mint as NFTs on an EVM-compatible chain, verify attendance via signed QR codes at the gate, and receive automated payouts.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+Built on NestJS + Prisma + PostgreSQL + Redis. Custodial wallets via Circle, on-chain operations via Circle SCP signed by a platform treasury wallet, fiat checkout via Paystack/Monnify (Nigeria today, more countries next), crypto checkout via Circle USDC universally.
 
-## Description
+## Architecture at a glance
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
-
-## Project setup
-
-```bash
-$ pnpm install
+```
+┌───────────────────────────────────────────────────────────────────────────┐
+│                              HostIT Platform                               │
+│                                                                            │
+│   ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐    │
+│   │   Web (Next.js) │    │  Mobile (RN)    │    │  Mobile Scanner │    │
+│   │   buyer + org   │    │  buyer + org    │    │  (organizer)    │    │
+│   └────────┬────────┘    └────────┬────────┘    └────────┬────────┘    │
+│            └──────────────────────┴──────────────────────┘              │
+│                                   │                                       │
+│                                   ▼  HTTPS REST                          │
+│   ┌───────────────────────────────────────────────────────────────────┐  │
+│   │                    NestJS Backend (this repo)                      │  │
+│   │                                                                    │  │
+│   │   Auth ─ Events ─ Tickets ─ Payments ─ Organizer ─ Wallets        │  │
+│   │     │       │        │         │           │           │           │  │
+│   │     ▼       ▼        ▼         ▼           ▼           ▼           │  │
+│   │   ┌─────────────────────────────────────────────────────┐         │  │
+│   │   │  Prisma ORM ─ PostgreSQL  │  BullMQ ─ Redis           │         │  │
+│   │   └─────────────────────────────────────────────────────┘         │  │
+│   │                                                                    │  │
+│   │   Blockchain layer:                                                │  │
+│   │     BlockchainReadService (ethers) ── chain registry              │  │
+│   │     CircleContractService (writes)  ── treasury wallet            │  │
+│   └───┬─────────────────────────┬──────────────────┬────────────────┬──┘  │
+│       │                         │                  │                │     │
+└───────┼─────────────────────────┼──────────────────┼────────────────┼─────┘
+        │                         │                  │                │
+        ▼                         ▼                  ▼                ▼
+┌──────────────┐         ┌────────────────┐   ┌──────────────┐  ┌──────────────┐
+│   Circle     │         │ Paystack/      │   │  Diamond     │  │  Blockradar  │
+│   WaaS       │         │ Monnify        │   │  Contract    │  │  (NGN VA)    │
+│              │         │                │   │              │  │              │
+│ • Wallets    │         │ • Card         │   │ • createTkt  │  │ • Bank-to-   │
+│ • SCP exec   │         │ • Bank xfer    │   │ • mintTicket │  │   cNGN       │
+│ • USDC ops   │         │ • Subaccounts  │   │ • checkIn    │  │   ramp       │
+│              │         │ • BVN lookup   │   │ • Diamond    │  │              │
+│              │         │                │   │   pattern    │  │              │
+└──────────────┘         └────────────────┘   └──────────────┘  └──────────────┘
+                                                Base Sepolia
+                                                Base mainnet
+                                                (more chains later)
 ```
 
-## Compile and run the project
+For a full system design — modules, data flows, key decisions — see [`docs/architecture.md`](./docs/architecture.md).
+
+## Prerequisites
+
+- **Node.js** 20+
+- **pnpm** 10+ (`npm install -g pnpm`)
+- **Docker + Docker Compose** (for local PostgreSQL + Redis)
+- **Circle developer account** at [console.circle.com](https://console.circle.com) — sandbox is fine for development
+- (Optional) **OpenSSL** for generating signing secrets
+
+## Quick start
+
+### 1. Install dependencies
 
 ```bash
-# development
-$ pnpm run start
-
-# watch mode
-$ pnpm run start:dev
-
-# production mode
-$ pnpm run start:prod
+git clone <this-repo>
+cd backend-v2
+pnpm install
 ```
 
-## Run tests
+### 2. Start local PostgreSQL + Redis
 
 ```bash
-# unit tests
-$ pnpm run test
-
-# e2e tests
-$ pnpm run test:e2e
-
-# test coverage
-$ pnpm run test:cov
+pnpm docker:up
 ```
 
-## Deployment
+This boots Postgres on `localhost:5432` and Redis on `localhost:6379` per `docker-compose.yml`.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+### 3. Configure environment
 
 ```bash
-$ pnpm install -g @nestjs/mau
-$ mau deploy
+cp .env.example .env
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+Open `.env` and fill in the required values. The `.env.example` is annotated with what each variable is for. You will need:
 
-## Resources
+- **Database / Redis** — already pre-filled for local Docker
+- **JWT secret** — any 32+ byte random string
+- **Paystack + Monnify keys** — from your Paystack/Monnify dashboards (sandbox keys for dev)
+- **Circle API key** — from console.circle.com (see [Circle bootstrap](#4-circle-bootstrap) below for the rest)
+- **`TICKET_QR_SIGNING_SECRET`** — generate with `openssl rand -hex 32`
+- **`ACTIVE_CHAINS`** + per-chain RPC + Diamond addresses — defaults to `BASE-SEPOLIA` with the deployed Diamond
+- **SendGrid + Twilio** — placeholder values are fine for dev (notification dispatch is currently a stub)
 
-Check out a few resources that may come in handy when working with NestJS:
+### 4. Circle bootstrap
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+The Circle integration requires a one-time setup ritual — generating an entity secret, registering it with Circle, and creating a wallet set + treasury wallet. Run these in order:
 
-## Support
+```bash
+# Generate the 32-byte entity secret. Copy the printed hex into .env as CIRCLE_ENTITY_SECRET.
+pnpm circle:generate-secret
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+# Register the ciphertext with Circle. Writes a recovery file to ~/.circle/recovery-file.json.
+# Back this file up to a secrets manager — losing it makes every wallet unrecoverable.
+pnpm circle:register-secret
 
-## Stay in touch
+# Create the user wallet set. Copy the printed UUID into .env as CIRCLE_WALLET_SET_ID.
+pnpm circle:bootstrap-wallet-set
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+# Create the platform treasury wallet. Copy both printed UUIDs into .env.
+pnpm circle:bootstrap-treasury
+```
+
+Each script is idempotent — safe to re-run. After the four steps, your `.env` should have all five `CIRCLE_*` IDs populated.
+
+> 📖 More: [`docs/circle-treasury-rotation.md`](./docs/circle-treasury-rotation.md) covers rotating the treasury wallet later.
+
+### 5. Run database migrations + generate Prisma client
+
+```bash
+pnpm prisma:generate
+pnpm prisma:migrate     # or `npx prisma migrate deploy` for non-interactive
+```
+
+### 6. Start the dev server
+
+```bash
+pnpm start:dev
+```
+
+Backend serves at `http://localhost:3000/api`. Swagger docs at `http://localhost:3000/api/docs`. Hit `/api/health` to verify DB + Circle + blockchain RPC are all reachable.
+
+## Useful scripts
+
+```bash
+# Build for production
+pnpm build
+
+# Run prod build
+pnpm start:prod
+
+# Tests
+pnpm test                    # unit tests
+pnpm test:e2e                # end-to-end
+pnpm test:cov                # coverage
+
+# Linting + formatting
+pnpm lint                    # eslint --fix
+pnpm format                  # prettier --write
+
+# Prisma
+pnpm prisma:generate         # regenerate client
+pnpm prisma:migrate          # create + apply a new migration
+pnpm prisma:studio           # browse the DB visually
+
+# Blockchain smoke tests (live — uses your .env)
+pnpm blockchain:smoke           # read-only Diamond ping
+pnpm blockchain:smoke-execute   # estimate fee for a Diamond write (no broadcast)
+pnpm blockchain:inspect <addr>  # inspect a specific buyer's wallet vs latest ticket
+pnpm blockchain:buy-ticket <ticketId> <buyerWalletId>   # end-to-end: buyer wallet mints a ticket on Base Sepolia
+```
+
+## Project layout
+
+```
+src/
+  auth/             # registration, login, role promotion (no KYC at signup)
+  organizer/        # per-provider fiat enablement (Paystack, Monnify)
+  events/           # event CRUD + on-chain publish flow
+  tickets/          # purchase, QR generation, planned verify + checkin
+  payments/         # country-aware provider registry + dispatch
+  webhooks/         # Paystack / Monnify / Blockradar webhook handlers
+  wallets/          # Circle wallet creation + admin retry
+  circle/           # Circle SDK wrapper + health
+  blockchain/       # ethers reads, Circle SCP writes, multi-chain registry
+  prisma/           # PrismaService (global)
+  health/           # composite /health endpoint
+  common/           # shared decorators, guards, filters
+
+prisma/             # schema + migrations
+scripts/
+  circle/           # one-shot Circle bootstrap scripts
+  blockchain/       # smoke tests + inspection scripts
+
+docs/               # architecture + runbooks
+test/               # e2e test suite
+```
+
+## Documentation
+
+- [`docs/architecture.md`](./docs/architecture.md) — full system design
+- [`docs/circle-treasury-rotation.md`](./docs/circle-treasury-rotation.md) — rotating the platform treasury wallet
+- [`docs/circle-gas-station.md`](./docs/circle-gas-station.md) — sponsoring buyer gas via Circle Gas Station
+- [`docs/organizer-user-journey.md`](./docs/organizer-user-journey.md) — organizer-side product walkthrough
+- [`docs/figma-audit-mobile-organizer.md`](./docs/figma-audit-mobile-organizer.md) — design-vs-backend audit (mobile organizer flow)
+
+## Sister repos
+
+- **`hostit-events/ticket`** — Solidity smart contracts (Foundry, Diamond pattern). Deployed on Base Sepolia today.
+- **Frontend** — Next.js web app + React Native mobile app live in their own repositories.
 
 ## License
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+UNLICENSED — internal project.
