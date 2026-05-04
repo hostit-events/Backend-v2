@@ -7,14 +7,24 @@ export const envValidationSchema = Joi.object({
     .default('development'),
   PORT: Joi.number().default(3000),
   API_PREFIX: Joi.string().default('api'),
+  // CORS allow-list (comma-separated). Required in production —
+  // unset/blank means "allow all", which is unsafe for prod.
+  CORS_ORIGINS: Joi.string().allow('').default(''),
 
   // Database
   DATABASE_URL: Joi.string().required(),
+  // Optional direct (non-pooled) URL — used by Prisma migrations when
+  // the app runs against a transaction-mode pooler (Supabase, etc).
+  DIRECT_URL: Joi.string().optional(),
 
   // Redis
   REDIS_HOST: Joi.string().default('localhost'),
   REDIS_PORT: Joi.number().default(6379),
   REDIS_PASSWORD: Joi.string().allow('').default(''),
+  // 'true' to wrap the connection in TLS (required for Upstash and
+  // any hosted Redis crossing the public internet). 'false' for
+  // local docker Redis (plaintext on the docker bridge).
+  REDIS_TLS: Joi.string().valid('true', 'false').default('false'),
 
   // Auth
   JWT_SECRET: Joi.string().required(),
