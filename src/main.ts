@@ -17,8 +17,26 @@ async function bootstrap() {
   // Global prefix
   app.setGlobalPrefix('api');
 
-  // CORS
-  app.enableCors();
+  // CORS — driven by CORS_ORIGINS env var. Comma-separated list of
+  // allowed origins. Empty / unset means allow all (dev convenience).
+  // Production deployments MUST set this to the FE domain(s).
+  const corsOrigins = configService.get<string>('CORS_ORIGINS');
+  if (corsOrigins && corsOrigins.trim().length > 0) {
+    const origins = corsOrigins
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean);
+    app.enableCors({ origin: origins, credentials: true });
+    Logger.log(`CORS restricted to: ${origins.join(', ')}`, 'Bootstrap');
+  } else {
+    app.enableCors();
+    if (configService.get<string>('app.nodeEnv') === 'production') {
+      Logger.warn(
+        'CORS is wide open in production — set CORS_ORIGINS to lock it down',
+        'Bootstrap',
+      );
+    }
+  }
 
   // Global pipes
   app.useGlobalPipes(

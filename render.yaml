@@ -1,0 +1,126 @@
+# Render infrastructure-as-code for the HostIT backend.
+#
+# To use: connect this repo to Render once, then every push to `main`
+# auto-deploys with this config. Changes to env vars marked
+# `sync: false` must be set manually in the Render dashboard.
+#
+# Docs: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: hostit-api-staging
+    runtime: node
+    plan: starter # $7/mo — always-on. Free tier sleeps and breaks webhooks.
+    branch: main
+    rootDir: .
+    autoDeploy: true
+
+    buildCommand: pnpm install --frozen-lockfile && pnpm prisma generate && pnpm build
+    preDeployCommand: pnpm dlx prisma migrate deploy
+    startCommand: node dist/main.js
+
+    healthCheckPath: /api/healthz
+
+    envVars:
+      # ---- App config (safe to declare here, not secrets) ----
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: API_PREFIX
+        value: api
+      - key: BCRYPT_ROUNDS
+        value: 10
+      - key: JWT_EXPIRATION
+        value: 24h
+
+      # ---- Multi-chain registry ----
+      - key: ACTIVE_CHAINS
+        value: BASE-SEPOLIA
+      - key: BASE_SEPOLIA_RPC_URL
+        value: https://sepolia.base.org
+
+      # ---- Provider base URLs (sandbox today; switch to live for prod) ----
+      - key: MONNIFY_BASE_URL
+        value: https://sandbox.monnify.com
+      - key: BLOCKRADAR_BASE_URL
+        value: https://api.blockradar.co/v1
+
+      # ---- Circle config (env vars; values are secret, set in dashboard) ----
+      - key: CIRCLE_ENVIRONMENT
+        value: sandbox
+      - key: CIRCLE_DEFAULT_CHAIN
+        value: BASE-SEPOLIA
+
+      # ---- Dev escape hatches — must be false in production ----
+      - key: SKIP_BVN_VERIFICATION
+        value: 'false'
+      - key: SKIP_BANK_VERIFICATION
+        value: 'false'
+
+      # ---- Secrets — set manually in Render dashboard, never committed ----
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: REDIS_HOST
+        sync: false
+      - key: REDIS_PORT
+        sync: false
+      - key: REDIS_PASSWORD
+        sync: false
+      - key: REDIS_TLS
+        value: 'true' # Upstash requires TLS
+      - key: JWT_SECRET
+        sync: false
+      - key: TICKET_QR_SIGNING_SECRET
+        sync: false
+
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: PAYSTACK_PUBLIC_KEY
+        sync: false
+      - key: MONNIFY_API_KEY
+        sync: false
+      - key: MONNIFY_SECRET_KEY
+        sync: false
+      - key: MONNIFY_CONTRACT_CODE
+        sync: false
+      - key: BLOCKRADAR_API_KEY
+        sync: false
+      - key: BLOCKRADAR_MASTER_WALLET_ID
+        sync: false
+
+      - key: BASE_SEPOLIA_DIAMOND_ADDRESS
+        sync: false
+      # Legacy single-chain vars — kept while smoke scripts depend on them.
+      - key: BLOCKCHAIN_RPC_URL
+        sync: false
+      - key: DIAMOND_CONTRACT_ADDRESS
+        sync: false
+
+      - key: CIRCLE_API_KEY
+        sync: false
+      - key: CIRCLE_ENTITY_SECRET
+        sync: false
+      - key: CIRCLE_WALLET_SET_ID
+        sync: false
+      - key: CIRCLE_TREASURY_WALLET_SET_ID
+        sync: false
+      - key: CIRCLE_TREASURY_WALLET_ID
+        sync: false
+
+      - key: SENDGRID_API_KEY
+        sync: false
+      - key: SENDGRID_FROM_EMAIL
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_PHONE_NUMBER
+        sync: false
+
+      # ---- CORS — set the FE origin(s) once they're known ----
+      - key: CORS_ORIGINS
+        sync: false

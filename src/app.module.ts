@@ -58,6 +58,21 @@ import {
           host: configService.get<string>('redis.host', 'localhost'),
           port: configService.get<number>('redis.port', 6379),
           password: configService.get<string>('redis.password') || undefined,
+          // TLS is required for Upstash (and recommended for any
+          // hosted Redis crossing the public internet). Local docker
+          // Redis runs plaintext, so default to false. Set
+          // REDIS_TLS=true in Render for the Upstash connection.
+          tls:
+            configService.get<string>('redis.tls') === 'true' ? {} : undefined,
+          // BullMQ requirement: ioredis must retry forever, not give
+          // up after N attempts. Without this, transient blips
+          // (Upstash failover, Render network hiccups) crash workers
+          // with MaxRetriesPerRequestError after ~3 minutes.
+          maxRetriesPerRequest: null,
+          // Skip the INFO command on connect — Upstash sometimes
+          // returns NOAUTH for INFO before the AUTH handshake races
+          // through, which BullMQ misinterprets as a fatal error.
+          enableReadyCheck: false,
         },
       }),
     }),
