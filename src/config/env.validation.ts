@@ -93,9 +93,18 @@ export const envValidationSchema = Joi.object({
   DIAMOND_CONTRACT_ADDRESS: Joi.string().optional(),
   PLATFORM_PRIVATE_KEY: Joi.string().optional(),
 
-  // SendGrid
-  SENDGRID_API_KEY: Joi.string().required(),
-  SENDGRID_FROM_EMAIL: Joi.string().email().required(),
+  // SendGrid — optional so dev can run without credentials. When the
+  // key is absent (or NODE_ENV=development) the ConsoleEmailProvider
+  // takes over and logs message content instead of sending. Production
+  // still expects both to be set; SendGridProvider throws on first
+  // send if the key is missing.
+  SENDGRID_API_KEY: Joi.string().optional().allow(''),
+  SENDGRID_FROM_EMAIL: Joi.string().email().optional().allow(''),
+
+  // Public app URL used inside email links (password reset, event
+  // shares, organizer dashboard). No trailing slash.
+  APP_URL: Joi.string().uri().optional(),
+  SUPPORT_EMAIL: Joi.string().email().optional(),
 
   // Twilio
   TWILIO_ACCOUNT_SID: Joi.string().required(),

@@ -9,6 +9,16 @@ import { PrismaService } from '../prisma/prisma.service';
  * For now we record the intent in `BlockchainTransaction` (status:
  * PENDING) so the webhook flow has a complete audit trail and the real
  * implementation only has to drain pending rows.
+ *
+ * NOTE (Phase 7 — #40): when the mint worker confirms an on-chain
+ * mint for a Ticket, it should:
+ *   1. Persist `Ticket.tokenId` + the buyer's wallet address.
+ *   2. Call `QrCodeService.issue({ chain, ticketId, tokenId, owner })`
+ *      and store the token on `Ticket.qrCode`.
+ *   3. Enqueue a TICKET_CONFIRMATION email via NotificationsService,
+ *      passing the QR data URL + ticket/event metadata.
+ * Issue #40 ships the template and dispatcher; the actual hook lives
+ * with the Phase 6 mint worker that owns step 1.
  */
 @Injectable()
 export class MintQueueService {

@@ -19,6 +19,7 @@ import { BecomeOrganizerDto } from './dto/become-organizer.dto';
 import { PaystackService } from '../paystack/paystack.service';
 import { MonnifyProvider } from '../payments/providers/monnify.provider';
 import { WalletsService } from '../wallets/wallets.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { UserRole } from '@prisma/client';
 
 @Injectable()
@@ -32,6 +33,7 @@ export class AuthService {
     private readonly paystackService: PaystackService,
     private readonly monnifyProvider: MonnifyProvider,
     private readonly walletsService: WalletsService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async register(dto: RegisterDto) {
@@ -71,6 +73,29 @@ export class AuthService {
       // lands without a wallet; admin retry picks them up later.
       this.logger.warn(
         `Failed to enqueue wallet creation for user ${user.id}: ${(err as Error).message}`,
+      );
+    }
+
+    // Welcome email — fire-and-forget. Queue outage shouldn't block
+    // registration; the row stays in NotificationStatus.PENDING for
+    // observability when it does fail.
+    try {
+      await this.notifications.enqueue({
+        type: 'WELCOME',
+        to: user.email,
+        userId: user.id,
+        data: {
+          firstName: user.firstName,
+          browseEventsUrl: `${this.configService.get<string>('notifications.appUrl', '')}/events`,
+          supportEmail: this.configService.get<string>(
+            'notifications.supportEmail',
+            'support@hostit.events',
+          ),
+        },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Failed to enqueue welcome email for ${user.id}: ${(err as Error).message}`,
       );
     }
 
@@ -154,8 +179,25 @@ export class AuthService {
         },
       });
 
-      // TODO: Send email via notification service (Phase 7)
-      this.logger.debug(`Password reset token for ${dto.email}: ${rawToken}`);
+      const appUrl = this.configService.get<string>('notifications.appUrl', '');
+      const resetUrl = `${appUrl}/auth/reset-password?token=${rawToken}`;
+      try {
+        await this.notifications.enqueue({
+          type: 'PASSWORD_RESET',
+          to: user.email,
+          userId: user.id,
+          data: {
+            firstName: user.firstName,
+            resetUrl,
+          },
+        });
+      } catch (err) {
+        // Token is already written; the user can be prompted to
+        // request a new one if the email never arrives.
+        this.logger.warn(
+          `Failed to enqueue password reset email for ${user.id}: ${(err as Error).message}`,
+        );
+      }
     }
 
     return {

@@ -16,6 +16,7 @@ import { CircleModule } from './circle/circle.module';
 import { OrganizerModule } from './organizer/organizer.module';
 import { WalletsModule } from './wallets/wallets.module';
 import { TicketsModule } from './tickets/tickets.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import {
@@ -28,6 +29,7 @@ import {
   blockradarConfig,
   blockchainConfig,
   circleConfig,
+  notificationsConfig,
   envValidationSchema,
 } from './config';
 
@@ -45,6 +47,7 @@ import {
         blockradarConfig,
         blockchainConfig,
         circleConfig,
+        notificationsConfig,
       ],
       validationSchema: envValidationSchema,
       validationOptions: {
@@ -90,6 +93,7 @@ import {
     BlockchainModule,
     WebhooksModule,
     TicketsModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [
