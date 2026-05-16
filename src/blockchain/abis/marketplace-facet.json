@@ -1,1 +1,656 @@
-[{"inputs":[],"name":"ContractNotAllowed","type":"error"},{"inputs":[],"name":"FeeAlreadySet","type":"error"},{"inputs":[],"name":"FeeNotEnabled","type":"error"},{"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"enum FeeType","name":"","type":"uint8"},{"internalType":"uint256","name":"","type":"uint256"}],"name":"InsufficientAllowance","type":"error"},{"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"enum FeeType","name":"","type":"uint8"},{"internalType":"uint256","name":"","type":"uint256"}],"name":"InsufficientBalance","type":"error"},{"inputs":[],"name":"InsufficientWithdrawBalance","type":"error"},{"inputs":[],"name":"InvalidFeeConfig","type":"error"},{"inputs":[],"name":"MaxTicketsHeld","type":"error"},{"inputs":[],"name":"PurchaseTimeNotReached","type":"error"},{"inputs":[],"name":"RefundNotEnabled","type":"error"},{"inputs":[],"name":"RefundPeriodExpired","type":"error"},{"inputs":[],"name":"RefundPotReached","type":"error"},{"inputs":[],"name":"TicketAccountingMismatch","type":"error"},{"inputs":[{"internalType":"uint64","name":"","type":"uint64"}],"name":"TicketDoesNotExist","type":"error"},{"inputs":[{"internalType":"uint256","name":"","type":"uint256"}],"name":"TicketNotOwned","type":"error"},{"inputs":[{"internalType":"enum FeeType","name":"","type":"uint8"},{"internalType":"uint256","name":"","type":"uint256"}],"name":"TicketPurchaseFailed","type":"error"},{"inputs":[],"name":"TicketSoldOut","type":"error"},{"inputs":[],"name":"TicketTransferFailed","type":"error"},{"inputs":[],"name":"TicketUnpauseFailed","type":"error"},{"inputs":[],"name":"TokenAddressZero","type":"error"},{"inputs":[],"name":"WithdrawPeriodNotReached","type":"error"},{"inputs":[],"name":"ZeroFee","type":"error"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"enum FeeType","name":"feeType","type":"uint8"},{"indexed":false,"internalType":"uint256","name":"fee","type":"uint256"},{"indexed":true,"internalType":"address","name":"to","type":"address"}],"name":"HostItBalanceWithdrawn","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint64","name":"ticketId","type":"uint64"},{"indexed":true,"internalType":"enum FeeType","name":"feeType","type":"uint8"},{"indexed":false,"internalType":"uint256","name":"fee","type":"uint256"},{"indexed":true,"internalType":"address","name":"to","type":"address"}],"name":"TicketBalanceWithdrawn","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint64","name":"ticketId","type":"uint64"},{"indexed":false,"internalType":"enum FeeType[]","name":"feeType","type":"uint8[]"},{"indexed":false,"internalType":"uint256[]","name":"fee","type":"uint256[]"}],"name":"TicketFeeSet","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint64","name":"ticketId","type":"uint64"},{"indexed":true,"internalType":"enum FeeType","name":"feeType","type":"uint8"},{"indexed":false,"internalType":"uint256","name":"fee","type":"uint256"},{"indexed":false,"internalType":"uint40","name":"tokenId","type":"uint40"}],"name":"TicketMinted","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint64","name":"ticketId","type":"uint64"},{"indexed":true,"internalType":"enum FeeType","name":"feeType","type":"uint8"},{"indexed":false,"internalType":"uint256","name":"fee","type":"uint256"},{"indexed":true,"internalType":"address","name":"to","type":"address"}],"name":"TicketRefunded","type":"event"},{"inputs":[{"internalType":"uint64","name":"_ticketId","type":"uint64"},{"internalType":"enum FeeType","name":"_feeType","type":"uint8"},{"internalType":"uint256","name":"_tokenId","type":"uint256"},{"internalType":"address","name":"_to","type":"address"}],"name":"claimRefund","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"uint64","name":"_ticketId","type":"uint64"},{"internalType":"enum FeeType","name":"_feeType","type":"uint8"}],"name":"getAllFees","outputs":[{"internalType":"uint256","name":"ticketFee_","type":"uint256"},{"internalType":"uint256","name":"hostItFee_","type":"uint256"},{"internalType":"uint256","name":"totalFee_","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"enum FeeType","name":"_feeType","type":"uint8"}],"name":"getFeeTokenAddress","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"enum FeeType","name":"_feeType","type":"uint8"}],"name":"getHostItBalance","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint256","name":"_fee","type":"uint256"}],"name":"getHostItFee","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"pure","type":"function"},{"inputs":[],"name":"getRefundPeriod","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"pure","type":"function"},{"inputs":[{"internalType":"uint64","name":"_ticketId","type":"uint64"},{"internalType":"enum FeeType","name":"_feeType","type":"uint8"}],"name":"getTicketBalance","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint64","name":"_ticketId","type":"uint64"},{"internalType":"enum FeeType","name":"_feeType","type":"uint8"}],"name":"getTicketFee","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint64","name":"_ticketId","type":"uint64"},{"internalType":"enum FeeType","name":"_feeType","type":"uint8"}],"name":"isFeeEnabled","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint64","name":"_ticketId","type":"uint64"},{"internalType":"enum FeeType","name":"_feeType","type":"uint8"},{"internalType":"address","name":"_buyer","type":"address"}],"name":"mintTicket","outputs":[{"internalType":"uint40","name":"","type":"uint40"}],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"uint64","name":"_ticketId","type":"uint64"},{"internalType":"enum FeeType[]","name":"_feeTypes","type":"uint8[]"},{"internalType":"uint256[]","name":"_fees","type":"uint256[]"}],"name":"setTicketFees","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"enum FeeType","name":"_feeType","type":"uint8"},{"internalType":"address","name":"_to","type":"address"}],"name":"withdrawHostItBalance","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"uint64","name":"_ticketId","type":"uint64"},{"internalType":"enum FeeType","name":"_feeType","type":"uint8"},{"internalType":"address","name":"_to","type":"address"}],"name":"withdrawTicketBalance","outputs":[],"stateMutability":"nonpayable","type":"function"}]
+[
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "account",
+        "type": "address"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "neededRole",
+        "type": "bytes32"
+      }
+    ],
+    "name": "AccessControlUnauthorizedAccount",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ContractNotAllowed",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint64",
+        "name": "",
+        "type": "uint64"
+      },
+      {
+        "internalType": "enum FeeType",
+        "name": "",
+        "type": "uint8"
+      }
+    ],
+    "name": "FeeNotEnabled",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      },
+      {
+        "internalType": "enum FeeType",
+        "name": "",
+        "type": "uint8"
+      },
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "name": "InsufficientAllowance",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      },
+      {
+        "internalType": "enum FeeType",
+        "name": "",
+        "type": "uint8"
+      },
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "name": "InsufficientBalance",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "enum FeeType",
+        "name": "",
+        "type": "uint8"
+      },
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "name": "InsufficientPayment",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InsufficientWithdrawBalance",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidFeeConfig",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "MaxTicketsHeld",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "enum FeeType",
+        "name": "",
+        "type": "uint8"
+      },
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "name": "PaymentFailed",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "PurchaseTimeNotReached",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "RefundNotEnabled",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "RefundPeriodExpired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "RefundPeriodNotReached",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "TicketAccountingMismatch",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint64",
+        "name": "",
+        "type": "uint64"
+      }
+    ],
+    "name": "TicketDoesNotExist",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "TicketIsFree",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "name": "TicketNotOwned",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "TicketSoldOut",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "TicketTransferFailed",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "TicketUnpauseFailed",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "TokenAddressZero",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "WithdrawPeriodNotReached",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "enum FeeType",
+        "name": "",
+        "type": "uint8"
+      }
+    ],
+    "name": "ZeroFee",
+    "type": "error"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "enum FeeType",
+        "name": "feeType",
+        "type": "uint8"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "fee",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "to",
+        "type": "address"
+      }
+    ],
+    "name": "HostItBalanceWithdrawn",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint64",
+        "name": "ticketId",
+        "type": "uint64"
+      },
+      {
+        "indexed": true,
+        "internalType": "enum FeeType",
+        "name": "feeType",
+        "type": "uint8"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "fee",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "to",
+        "type": "address"
+      }
+    ],
+    "name": "TicketBalanceWithdrawn",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint64",
+        "name": "ticketId",
+        "type": "uint64"
+      },
+      {
+        "indexed": false,
+        "internalType": "enum FeeType[]",
+        "name": "feeType",
+        "type": "uint8[]"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256[]",
+        "name": "fee",
+        "type": "uint256[]"
+      }
+    ],
+    "name": "TicketFeeSet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint64",
+        "name": "ticketId",
+        "type": "uint64"
+      },
+      {
+        "indexed": true,
+        "internalType": "enum FeeType",
+        "name": "feeType",
+        "type": "uint8"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "fee",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint40",
+        "name": "tokenId",
+        "type": "uint40"
+      }
+    ],
+    "name": "TicketMinted",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint64",
+        "name": "ticketId",
+        "type": "uint64"
+      },
+      {
+        "indexed": true,
+        "internalType": "enum FeeType",
+        "name": "feeType",
+        "type": "uint8"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "fee",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "to",
+        "type": "address"
+      }
+    ],
+    "name": "TicketRefunded",
+    "type": "event"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint64",
+        "name": "_ticketId",
+        "type": "uint64"
+      },
+      {
+        "internalType": "enum FeeType",
+        "name": "_feeType",
+        "type": "uint8"
+      },
+      {
+        "internalType": "uint256",
+        "name": "_tokenId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "_to",
+        "type": "address"
+      }
+    ],
+    "name": "claimRefund",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint64",
+        "name": "_ticketId",
+        "type": "uint64"
+      },
+      {
+        "internalType": "enum FeeType",
+        "name": "_feeType",
+        "type": "uint8"
+      }
+    ],
+    "name": "feeEnabled",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint64",
+        "name": "_ticketId",
+        "type": "uint64"
+      },
+      {
+        "internalType": "enum FeeType",
+        "name": "_feeType",
+        "type": "uint8"
+      }
+    ],
+    "name": "getAllFees",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "ticketFee_",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "hostItFee_",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "totalFee_",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "enum FeeType",
+        "name": "_feeType",
+        "type": "uint8"
+      }
+    ],
+    "name": "getFeeTokenAddress",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "enum FeeType",
+        "name": "_feeType",
+        "type": "uint8"
+      }
+    ],
+    "name": "getHostItBalance",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "_fee",
+        "type": "uint256"
+      }
+    ],
+    "name": "getHostItFee",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "pure",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getRefundPeriod",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "pure",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint64",
+        "name": "_ticketId",
+        "type": "uint64"
+      },
+      {
+        "internalType": "enum FeeType",
+        "name": "_feeType",
+        "type": "uint8"
+      }
+    ],
+    "name": "getTicketBalance",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint64",
+        "name": "_ticketId",
+        "type": "uint64"
+      },
+      {
+        "internalType": "enum FeeType",
+        "name": "_feeType",
+        "type": "uint8"
+      }
+    ],
+    "name": "getTicketFee",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint64",
+        "name": "_ticketId",
+        "type": "uint64"
+      },
+      {
+        "internalType": "enum FeeType",
+        "name": "_feeType",
+        "type": "uint8"
+      },
+      {
+        "internalType": "address",
+        "name": "_buyer",
+        "type": "address"
+      }
+    ],
+    "name": "mintTicket",
+    "outputs": [
+      {
+        "internalType": "uint40",
+        "name": "",
+        "type": "uint40"
+      }
+    ],
+    "stateMutability": "payable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint64",
+        "name": "_ticketId",
+        "type": "uint64"
+      },
+      {
+        "internalType": "enum FeeType[]",
+        "name": "_feeTypes",
+        "type": "uint8[]"
+      },
+      {
+        "internalType": "uint256[]",
+        "name": "_fees",
+        "type": "uint256[]"
+      }
+    ],
+    "name": "updateTicketFees",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "enum FeeType",
+        "name": "_feeType",
+        "type": "uint8"
+      },
+      {
+        "internalType": "address",
+        "name": "_to",
+        "type": "address"
+      }
+    ],
+    "name": "withdrawHostItBalance",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint64",
+        "name": "_ticketId",
+        "type": "uint64"
+      },
+      {
+        "internalType": "enum FeeType",
+        "name": "_feeType",
+        "type": "uint8"
+      },
+      {
+        "internalType": "address",
+        "name": "_to",
+        "type": "address"
+      }
+    ],
+    "name": "withdrawTicketBalance",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+]
