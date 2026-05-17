@@ -1,33 +1,39 @@
+import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, Logger } from '@nestjs/common';
 import { BlockchainTxStatus, BlockchainTxType } from '@prisma/client';
+import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 
+export const TICKET_MINT_QUEUE = 'ticket-mint';
+export const MINT_TICKET_JOB = 'mint-ticket';
+
+export interface MintTicketJobData {
+  ticketId: string;
+  eventId: string;
+  blockchainTxId: string;
+}
+
 /**
- * STUB — Phase 6 will replace this with a real BullMQ producer that
- * dispatches to a worker calling `mintTicket` on the Diamond contract.
+ * Producer for the `ticket-mint` queue. Called by the webhook handler
+ * after a payment confirms — one enqueue per Ticket row, so a quantity
+ * of N purchases fans out into N independent mint jobs.
  *
- * For now we record the intent in `BlockchainTransaction` (status:
- * PENDING) so the webhook flow has a complete audit trail and the real
- * implementation only has to drain pending rows.
- *
- * NOTE (Phase 7 — #40): when the mint worker confirms an on-chain
- * mint for a Ticket, it should:
- *   1. Persist `Ticket.tokenId` + the buyer's wallet address.
- *   2. Call `QrCodeService.issue({ chain, ticketId, tokenId, owner })`
- *      and store the token on `Ticket.qrCode`.
- *   3. Enqueue a TICKET_CONFIRMATION email via NotificationsService,
- *      passing the QR data URL + ticket/event metadata.
- * Issue #40 ships the template and dispatcher; the actual hook lives
- * with the Phase 6 mint worker that owns step 1.
+ * The BlockchainTransaction row is written eagerly at enqueue time so
+ * we always have an audit row, even if the queue itself is briefly
+ * unreachable. The worker (MintTicketProcessor) attaches the Circle
+ * transaction id to this row when it submits to the chain.
  */
 @Injectable()
 export class MintQueueService {
   private readonly logger = new Logger(MintQueueService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @InjectQueue(TICKET_MINT_QUEUE) private readonly queue: Queue,
+  ) {}
 
   async enqueueMint(ticketId: string, eventId: string): Promise<void> {
-    await this.prisma.blockchainTransaction.create({
+    const blockchainTx = await this.prisma.blockchainTransaction.create({
       data: {
         ticketId,
         eventId,
@@ -35,8 +41,28 @@ export class MintQueueService {
         status: BlockchainTxStatus.PENDING,
       },
     });
+
+    await this.queue.add(
+      MINT_TICKET_JOB,
+      {
+        ticketId,
+        eventId,
+        blockchainTxId: blockchainTx.id,
+      } satisfies MintTicketJobData,
+      {
+        // Mint is high-cost (real ETH gas, real on-chain state). Five
+        // attempts with exponential backoff covers transient Circle
+        // outages and the wallet-not-ready window for guest buyers
+        // whose wallet is still provisioning at payment-confirm time.
+        attempts: 5,
+        backoff: { type: 'exponential', delay: 10_000 },
+        removeOnComplete: { age: 60 * 60 * 24, count: 1000 },
+        removeOnFail: { age: 60 * 60 * 24 * 7 },
+      },
+    );
+
     this.logger.log(
-      `[STUB] queued ticket-mint for ticket=${ticketId} event=${eventId}`,
+      `Queued ticket-mint for ticket=${ticketId} event=${eventId} blockchainTxId=${blockchainTx.id}`,
     );
   }
 }
