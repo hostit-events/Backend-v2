@@ -16,8 +16,14 @@
 import factoryFacetAbi from './factory-facet.json';
 import marketplaceFacetAbi from './marketplace-facet.json';
 import checkinFacetAbi from './checkin-facet.json';
+import accessControlFacetAbi from './access-control-facet.json';
 
-export { factoryFacetAbi, marketplaceFacetAbi, checkinFacetAbi };
+export {
+  factoryFacetAbi,
+  marketplaceFacetAbi,
+  checkinFacetAbi,
+  accessControlFacetAbi,
+};
 
 /**
  * Union of every selector exposed by the Diamond. Use this when
@@ -26,13 +32,16 @@ export { factoryFacetAbi, marketplaceFacetAbi, checkinFacetAbi };
  * Note: per-ticket main-admin roles are auto-granted to the
  * createTicket caller, so the treasury wallet picks them up implicitly
  * once Circle SCP starts signing event-publish jobs (#34, #67). No
- * separate grant step is required at deploy time. OwnableRolesFacet
- * and DiamondLoupe ABIs can be added if/when we need to call
- * withdrawHostItBalance (platform owner) or introspect facets — neither
- * is on the immediate path.
+ * separate grant step is required at deploy time. AccessControl is
+ * merged in so the platform admin can call grantRole(hostItTicketHash,
+ * organizerSCA) when we move createTicket to organizer-signed via Gas
+ * Station. OwnableFacet + DiamondLoupe ABIs can be added if/when we
+ * need to call withdrawHostItBalance (platform owner) or introspect
+ * facets — neither is on the immediate path.
  */
 export const diamondAbi = [
   ...factoryFacetAbi,
   ...marketplaceFacetAbi,
   ...checkinFacetAbi,
+  ...accessControlFacetAbi,
 ];

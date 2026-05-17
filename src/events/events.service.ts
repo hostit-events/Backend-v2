@@ -7,7 +7,9 @@ import {
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import { QueryEventsDto } from './dto/query-events.dto';
@@ -26,6 +28,8 @@ export class EventsService {
   constructor(
     private readonly prisma: PrismaService,
     @InjectQueue('event-publish') private readonly eventPublishQueue: Queue,
+    private readonly notifications: NotificationsService,
+    private readonly configService: ConfigService,
   ) {}
 
   async create(organizerId: string, dto: CreateEventDto) {
@@ -512,7 +516,12 @@ export class EventsService {
         include: {
           ticketTypes: true,
           organizer: {
-            select: { id: true, firstName: true, lastName: true },
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+            },
           },
         },
       });
@@ -553,6 +562,29 @@ export class EventsService {
     this.logger.log(
       `Event published: ${updatedEvent.name} (${updatedEvent.slug}) — ${ticketTypePayloads.length} on-chain entries queued on ${event.chain}`,
     );
+
+    // Notify organizer their event is live. The on-chain mint is still
+    // processing in the background, but from the organizer's POV the
+    // event is published and shareable now — that's what this email
+    // confirms. Fire-and-forget; queue outage doesn't undo the publish.
+    try {
+      const appUrl = this.configService.get<string>('notifications.appUrl', '');
+      await this.notifications.enqueue({
+        type: 'EVENT_PUBLISHED',
+        to: updatedEvent.organizer.email,
+        userId: updatedEvent.organizer.id,
+        data: {
+          organizerName: updatedEvent.organizer.firstName,
+          eventName: updatedEvent.name,
+          eventUrl: `${appUrl}/events/${updatedEvent.slug}`,
+          dashboardUrl: `${appUrl}/organizer/events/${updatedEvent.id}`,
+        },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Failed to enqueue event-published email for event ${eventId}: ${(err as Error).message}`,
+      );
+    }
 
     return {
       ...updatedEvent,

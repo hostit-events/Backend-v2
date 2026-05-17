@@ -11,9 +11,13 @@ import {
   Prisma,
   TicketStatus,
   TransactionStatus,
+  UserRole,
 } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
+import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaymentsService } from '../payments/payments.service';
+import { WalletsService } from '../wallets/wallets.service';
 import { ConfigService } from '@nestjs/config';
 import { PurchaseTicketDto } from './dto/purchase-ticket.dto';
 import { DEFAULT_FEE_BEARER, PLATFORM_FEE_RATE } from '../payments/constants';
@@ -35,6 +39,7 @@ export class TicketsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly payments: PaymentsService,
+    private readonly wallets: WalletsService,
     configService: ConfigService,
   ) {
     // Where the gateway redirects after checkout. For local dev this
@@ -110,16 +115,27 @@ export class TicketsService {
       );
     }
 
-    // Per-user limit. Authenticated buyers are tracked by buyerId so
-    // they can't bypass the cap by changing email; guests fall back to
-    // (eventId + buyerEmail) on the same ticket type.
+    // Guest checkout still produces a User row so the mint worker has a
+    // wallet to mint into. Authenticated buyers pass through unchanged;
+    // unauthenticated buyers are upserted by email and a Circle wallet
+    // creation is enqueued on the event's chain.
+    const buyerId =
+      ctx.buyerId ??
+      (await this.findOrCreateGuestBuyer({
+        email: dto.buyerEmail,
+        name: dto.buyerName,
+        phone: dto.buyerPhone,
+        chain: event.chain,
+      }));
+
+    // Per-buyer cap. Now keyed off buyerId for everyone (guest or auth)
+    // since the guest upsert above attaches every purchase to a stable
+    // User row.
     const existingForBuyer = await this.prisma.ticket.count({
       where: {
         ticketTypeId: ticketType.id,
         status: { not: TicketStatus.CANCELLED },
-        ...(ctx.buyerId
-          ? { buyerId: ctx.buyerId }
-          : { buyerId: null, buyerEmail: dto.buyerEmail }),
+        buyerId,
       },
     });
     if (existingForBuyer + dto.quantity > ticketType.maxPerUser) {
@@ -202,7 +218,7 @@ export class TicketsService {
             ticketTypeId: ticketType.id,
             eventId: event.id,
             transactionId: transaction.id,
-            buyerId: ctx.buyerId ?? null,
+            buyerId,
             buyerEmail: dto.buyerEmail,
             buyerName: dto.buyerName,
             buyerPhone: dto.buyerPhone ?? null,
@@ -306,5 +322,63 @@ export class TicketsService {
       platformAmount: Number(platformFee),
       feeBearer: DEFAULT_FEE_BEARER,
     };
+  }
+
+  /**
+   * Find a User by email; create a placeholder BUYER record if none
+   * exists. Wallet creation is enqueued on the event's chain so the
+   * mint worker has somewhere to mint into when the payment confirms.
+   *
+   * The placeholder user has a random unguessable password — the
+   * guest can claim the account later by running the forgot-password
+   * flow against their email, which sets a real password.
+   */
+  private async findOrCreateGuestBuyer(input: {
+    email: string;
+    name: string;
+    phone?: string;
+    chain: string;
+  }): Promise<string> {
+    const existing = await this.prisma.user.findUnique({
+      where: { email: input.email },
+      select: { id: true },
+    });
+    if (existing) return existing.id;
+
+    const placeholderPassword = await bcrypt.hash(
+      randomBytes(32).toString('hex'),
+      10,
+    );
+    const [firstName, ...rest] = input.name.trim().split(/\s+/);
+    const lastName = rest.join(' ') || '';
+
+    const user = await this.prisma.user.create({
+      data: {
+        email: input.email,
+        password: placeholderPassword,
+        firstName: firstName || 'Guest',
+        lastName,
+        phone: input.phone,
+        role: UserRole.BUYER,
+      },
+    });
+
+    // Provision a wallet on the event's chain. The mint worker will
+    // retry with backoff if the wallet isn't ready yet — we don't
+    // block the purchase response on Circle availability.
+    try {
+      await this.wallets.enqueueWalletCreation(user.id, {
+        chain: input.chain,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Failed to enqueue guest wallet for user ${user.id}: ${(err as Error).message}`,
+      );
+    }
+
+    this.logger.log(
+      `Auto-provisioned guest buyer userId=${user.id} email=${input.email}`,
+    );
+    return user.id;
   }
 }

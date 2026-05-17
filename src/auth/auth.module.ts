@@ -8,12 +8,14 @@ import { AuthController } from './auth.controller';
 import { PaystackModule } from '../paystack/paystack.module';
 import { PaymentsModule } from '../payments/payments.module';
 import { WalletsModule } from '../wallets/wallets.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
     PaystackModule,
     PaymentsModule,
     WalletsModule,
+    NotificationsModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       inject: [ConfigService],
