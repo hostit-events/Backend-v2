@@ -10,7 +10,7 @@
  * naming when we eventually add them.
  */
 
-export type ChainId = 'BASE-SEPOLIA' | 'BASE';
+export type ChainId = 'BASE-SEPOLIA' | 'BASE' | 'ARC-TESTNET';
 
 export interface ChainConfig {
   id: ChainId;
@@ -50,6 +50,20 @@ const CHAIN_DEFINITIONS: Record<ChainId, StaticChainConfig> = {
     blockExplorer: 'https://basescan.org',
     isTestnet: false,
     circleBlockchain: 'BASE',
+  },
+  // Arc Testnet — Circle's EVM L1 where USDC is the native gas token.
+  // Treasury wallet must be funded with USDC (not ETH) for gas on this
+  // chain; faucet: https://faucet.circle.com. `circleBlockchain` follows
+  // the same kebab convention as Circle's other testnets; verify against
+  // Circle docs if createWallets/contract-exec calls reject the value.
+  'ARC-TESTNET': {
+    id: 'ARC-TESTNET',
+    displayName: 'Arc Testnet',
+    evmChainId: 5042002,
+    usdcAddress: '0x3600000000000000000000000000000000000000',
+    blockExplorer: 'https://testnet.arcscan.app',
+    isTestnet: true,
+    circleBlockchain: 'ARC-TESTNET',
   },
 };
 

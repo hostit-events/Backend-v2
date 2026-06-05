@@ -33,14 +33,20 @@ export class EventsService {
   ) {}
 
   async create(organizerId: string, dto: CreateEventDto) {
-    // Verify organizer has KYC VERIFIED status
+    // Organizers can create events immediately — crypto payments are always
+    // available, so no KYC is required up front. KYC + bank verification are
+    // enforced just-in-time when an organizer enables a fiat provider for a
+    // country (see OrganizerService.enablePaystack / .enableMonnify), NOT at
+    // event creation. We only assert the organizer profile exists; the route
+    // is already guarded by @Roles(ORGANIZER), and becomeOrganizer always
+    // creates this row alongside the role grant.
     const profile = await this.prisma.organizerProfile.findUnique({
       where: { userId: organizerId },
     });
 
-    if (!profile || profile.kycStatus !== 'VERIFIED') {
+    if (!profile) {
       throw new ForbiddenException(
-        'Only verified organizers can create events',
+        'Organizer profile missing — call /auth/become-organizer first',
       );
     }
 
