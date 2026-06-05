@@ -242,6 +242,29 @@ export class EventsService {
     };
   }
 
+  // Lists the calling organizer's DRAFT events (the ones still awaiting
+  // publish). Scoped to organizerId so an organizer only ever sees their
+  // own drafts. Newest first, with the same minPrice/totalAvailable stats
+  // findAll returns for UI consistency.
+  async findMyDrafts(organizerId: string) {
+    const events = await this.prisma.event.findMany({
+      where: { organizerId, status: EventStatus.DRAFT },
+      orderBy: { createdAt: 'desc' },
+      include: { ticketTypes: true },
+    });
+
+    return events.map((event) => {
+      const prices = event.ticketTypes.map((tt) => Number(tt.price));
+      const minPrice = prices.length > 0 ? Math.min(...prices) : 0;
+      const totalAvailable = event.ticketTypes.reduce(
+        (sum, tt) => sum + (tt.quantity - tt.soldCount),
+        0,
+      );
+
+      return { ...event, minPrice, totalAvailable };
+    });
+  }
+
   async update(eventId: string, organizerId: string, dto: UpdateEventDto) {
     const event = await this.prisma.event.findUnique({
       where: { id: eventId },

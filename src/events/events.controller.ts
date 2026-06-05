@@ -32,6 +32,14 @@ export class EventsController {
     return this.eventsService.findAll(query);
   }
 
+  @Get('me/drafts')
+  @ApiBearerAuth()
+  @Roles(UserRole.ORGANIZER)
+  @ApiOperation({ summary: "List the current organizer's DRAFT events" })
+  findMyDrafts(@CurrentUser('id') organizerId: string) {
+    return this.eventsService.findMyDrafts(organizerId);
+  }
+
   @Get(':slug')
   @Public()
   @ApiOperation({ summary: 'Get event details by slug' })
