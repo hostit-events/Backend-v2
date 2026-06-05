@@ -83,6 +83,10 @@ export const envValidationSchema = Joi.object({
   BASE_DIAMOND_ADDRESS: Joi.string()
     .pattern(/^0x[0-9a-fA-F]{40}$/)
     .optional(),
+  ARC_TESTNET_RPC_URL: Joi.string().uri().optional(),
+  ARC_TESTNET_DIAMOND_ADDRESS: Joi.string()
+    .pattern(/^0x[0-9a-fA-F]{40}$/)
+    .optional(),
 
   // Legacy single-chain vars — being phased out in favour of the
   // per-chain registry above. Kept optional so existing scripts and
