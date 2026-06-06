@@ -1,5 +1,6 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   BlockchainTxStatus,
   BlockchainTxType,
@@ -7,13 +8,9 @@ import {
   WalletCreationStatus,
 } from '@prisma/client';
 import { Job } from 'bullmq';
-import { Interface, type LogDescription } from 'ethers';
 import { PrismaService } from '../prisma/prisma.service';
-import { NotificationsService } from '../notifications/notifications.service';
-import { QrCodeService } from '../tickets/qr-code.service';
-import { diamondAbi } from './abis';
-import { BlockchainReadService } from './blockchain-read.service';
 import { CircleContractService } from './circle-contract.service';
+import { MintFinalizerService } from './mint-finalizer.service';
 import {
   MINT_TICKET_JOB,
   MintTicketJobData,
@@ -46,11 +43,13 @@ const DEFAULT_FEE_TYPE = FEE_TYPE_BY_NAME.ETH;
 
 /**
  * Consumes `ticket-mint` jobs and runs `mintTicket(uint64 ticketId,
- * uint8 feeType, address buyer)` on the Diamond via Circle SCP. On
- * success, parses the `TicketMinted` event from the receipt to
- * recover the per-mint `tokenId`, persists it on the Ticket row,
- * flips status to CONFIRMED, issues a signed QR, and fires the
- * TICKET_CONFIRMATION email.
+ * uint8 feeType, address buyer)` on the Diamond via Circle SCP.
+ *
+ * Completion is handled in one of two ways:
+ *  - `circle.webhooksEnabled` ON (#65): submit and return — the Circle
+ *    webhook handler reconciles and calls MintFinalizerService.
+ *  - OFF (fallback): poll until terminal here, then finalize inline.
+ * Both paths converge on the same idempotent MintFinalizerService.
  *
  * Wallet provisioning is async for guest buyers; this worker treats
  * a PENDING wallet as a transient state and throws to retry — Bull's
@@ -60,14 +59,12 @@ const DEFAULT_FEE_TYPE = FEE_TYPE_BY_NAME.ETH;
 @Processor(TICKET_MINT_QUEUE)
 export class MintTicketProcessor extends WorkerHost {
   private readonly logger = new Logger(MintTicketProcessor.name);
-  private readonly iface = new Interface(diamondAbi);
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly circle: CircleContractService,
-    private readonly read: BlockchainReadService,
-    private readonly qrCode: QrCodeService,
-    private readonly notifications: NotificationsService,
+    private readonly finalizer: MintFinalizerService,
+    private readonly config: ConfigService,
   ) {
     super();
   }
@@ -179,8 +176,18 @@ export class MintTicketProcessor extends WorkerHost {
         `mintTicket submitted (ticket=${ticket.id}, circleTxId=${circleTransactionId})`,
       );
 
-      // Pre-#65 fallback: poll until terminal. Mint takes one block,
-      // so a 3-minute ceiling is generous.
+      // When the Circle webhook is wired (#65) it is authoritative for
+      // completion: submit and return, and the circle-webhook processor
+      // reconciles + finalizes when the transaction notification lands.
+      if (this.config.get<boolean>('circle.webhooksEnabled')) {
+        this.logger.log(
+          `mintTicket awaiting Circle webhook for completion (ticket=${ticket.id})`,
+        );
+        return;
+      }
+
+      // Fallback: poll until terminal. Mint takes one block, so a
+      // 3-minute ceiling is generous.
       const final = await this.circle.pollUntilTerminal(circleTransactionId, {
         intervalMs: 4_000,
         timeoutMs: 180_000,
@@ -195,42 +202,7 @@ export class MintTicketProcessor extends WorkerHost {
         throw new Error('Circle reported terminal success without a txHash');
       }
 
-      const tokenId = await this.extractTokenId(
-        ticket.event.chain,
-        final.txHash,
-      );
-
-      // Schema note: Ticket.tokenId is `Int` (32-bit) while the on-chain
-      // type is uint40. We cast via Number() — safe up to 2.1B mints,
-      // which testnet won't approach. Widen the column to BigInt before
-      // mainnet if total per-Diamond mint count is expected to cross
-      // that threshold.
-      await this.prisma.ticket.update({
-        where: { id: ticket.id },
-        data: {
-          tokenId: Number(tokenId),
-          status: TicketStatus.CONFIRMED,
-        },
-      });
-
-      this.logger.log(
-        `Ticket minted (ticket=${ticket.id}, tokenId=${tokenId}, txHash=${final.txHash})`,
-      );
-
-      await this.issueQrAndNotify({
-        ticketId: ticket.id,
-        chain: ticket.event.chain,
-        onChainTicketId: ticket.ticketType.onChainTicketId,
-        tokenId,
-        ownerAddress: wallet.address,
-        buyerEmail: ticket.buyerEmail,
-        buyerName: ticket.buyerName,
-        eventName: ticket.event.name,
-        eventStart: ticket.event.startTime,
-        eventVenue: ticket.event.venue,
-        ticketTypeName: ticket.ticketType.name,
-        ticketReference: ticket.reference,
-      });
+      await this.finalizer.finalize(ticket.id, final.txHash);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'unknown error';
       const isFinal = job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
@@ -259,89 +231,6 @@ export class MintTicketProcessor extends WorkerHost {
         );
       }
       throw error;
-    }
-  }
-
-  // ---------- internals ----------
-
-  private async extractTokenId(chain: string, txHash: string): Promise<bigint> {
-    const provider = this.read.getProvider(chain);
-    const receipt = await provider.getTransactionReceipt(txHash);
-    if (!receipt) {
-      throw new Error(`No receipt for tx ${txHash} on ${chain}`);
-    }
-
-    let minted: LogDescription | null = null;
-    for (const log of receipt.logs) {
-      try {
-        const parsed = this.iface.parseLog({
-          topics: Array.from(log.topics),
-          data: log.data,
-        });
-        if (parsed?.name === 'TicketMinted') {
-          minted = parsed;
-          break;
-        }
-      } catch {
-        // not a known facet event — skip
-      }
-    }
-
-    if (!minted) {
-      throw new Error(
-        `TicketMinted event not found in receipt for tx ${txHash}`,
-      );
-    }
-    return minted.args.tokenId as bigint;
-  }
-
-  private async issueQrAndNotify(input: {
-    ticketId: string;
-    chain: string;
-    onChainTicketId: bigint;
-    tokenId: bigint;
-    ownerAddress: string;
-    buyerEmail: string;
-    buyerName: string;
-    eventName: string;
-    eventStart: Date;
-    eventVenue: string;
-    ticketTypeName: string;
-    ticketReference: string;
-  }): Promise<void> {
-    const issued = await this.qrCode.issue({
-      chain: input.chain,
-      ticketId: input.onChainTicketId.toString(),
-      tokenId: input.tokenId.toString(),
-      owner: input.ownerAddress,
-    });
-
-    // Persist the signed token (not the data URL — that's reproducible
-    // from the token, and storing a 12KB PNG per ticket is wasteful).
-    await this.prisma.ticket.update({
-      where: { id: input.ticketId },
-      data: { qrCode: issued.token },
-    });
-
-    try {
-      await this.notifications.enqueue({
-        type: 'TICKET_CONFIRMATION',
-        to: input.buyerEmail,
-        ticketId: input.ticketId,
-        data: {
-          buyerName: input.buyerName,
-          eventName: input.eventName,
-          eventStart: input.eventStart,
-          eventVenue: input.eventVenue,
-          ticketTypeName: input.ticketTypeName,
-          ticketReference: input.ticketReference,
-          qrDataUrl: issued.dataUrl,
-        },
-      });
-    } catch (err) {
-      this.logger.warn(
-        `Failed to enqueue ticket confirmation email for ${input.ticketId}: ${(err as Error).message}`,
-      );
     }
   }
 }
