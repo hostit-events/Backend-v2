@@ -1,10 +1,16 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
-import { BlockchainTxType } from '@prisma/client';
+import {
+  BlockchainTxType,
+  CryptoDepositStatus,
+  Prisma,
+  TransactionStatus,
+} from '@prisma/client';
 import { Job } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { CircleContractService } from './circle-contract.service';
 import { MintFinalizerService } from './mint-finalizer.service';
+import { MintQueueService } from './mint-queue.service';
 import {
   CIRCLE_WEBHOOK_JOB,
   CIRCLE_WEBHOOK_QUEUE,
@@ -23,21 +29,27 @@ interface CircleTxResource {
   txHash?: string;
   blockHeight?: number;
   errorReason?: string;
+  /** Receiving (inbound) / sending (outbound) Circle wallet id. */
+  walletId?: string;
+  /** Transfer amounts as decimal strings; USDC uses amounts[0]. */
+  amounts?: string[];
 }
 
 /**
  * Processes verified Circle webhooks (#65). Loads the audit row, parses
  * the notification, and dispatches by type.
  *
- * Phase 1 handles **contract executions** we initiated (matched by
- * `circleTransactionId` → BlockchainTransaction): reconcile the row's
- * status, and on a confirmed MINT run the shared MintFinalizerService.
- * Inbound USDC deposits (#69) and organizer payouts (#68) match no
- * BlockchainTransaction and are no-ops here until Phase 2.
+ * - **Contract executions** we initiated (`transactions.outbound`,
+ *   matched by `circleTransactionId` → BlockchainTransaction): reconcile
+ *   the row's status; on a confirmed MINT run MintFinalizerService.
+ * - **Inbound USDC deposits** (`transactions.inbound`, #69 crypto
+ *   checkout): matched by receiving `walletId` + amount → a PENDING
+ *   CryptoDeposit; settle the linked transaction and enqueue mints.
+ * - Organizer payouts (#68) are not yet handled.
  *
- * Replay-safe: the WebhookEvent.processedAt guard, plus the idempotent
- * reconcile() and finalize(), make re-delivery of the same notification
- * a no-op.
+ * Replay-safe: the WebhookEvent.processedAt guard, plus idempotent
+ * reconcile/finalize and the CryptoDeposit/transaction status guards,
+ * make re-delivery of the same notification a no-op.
  */
 @Processor(CIRCLE_WEBHOOK_QUEUE)
 export class CircleWebhookProcessor extends WorkerHost {
@@ -47,6 +59,7 @@ export class CircleWebhookProcessor extends WorkerHost {
     private readonly prisma: PrismaService,
     private readonly circle: CircleContractService,
     private readonly finalizer: MintFinalizerService,
+    private readonly mintQueue: MintQueueService,
   ) {
     super();
   }
@@ -106,18 +119,110 @@ export class CircleWebhookProcessor extends WorkerHost {
       return;
     }
 
-    if (notificationType.startsWith('transactions.')) {
-      await this.handleTransaction(payload);
+    if (notificationType === 'transactions.inbound') {
+      await this.handleInboundDeposit(payload);
       return;
     }
 
-    // notifications.*, wallets.*, etc. — no Phase 1 handler.
+    if (notificationType.startsWith('transactions.')) {
+      await this.handleContractExecution(payload);
+      return;
+    }
+
+    // notifications.*, wallets.*, etc. — no handler yet.
+    this.logger.log(`Circle webhook: no handler for type=${notificationType}`);
+  }
+
+  /**
+   * Inbound USDC deposit → settle a crypto ticket purchase. Matches the
+   * receiving wallet + amount to a PENDING CryptoDeposit, marks it
+   * CONFIRMED, flips the linked transaction to SUCCESS, and enqueues a
+   * mint per ticket (mirrors WebhooksService.handleSuccess).
+   */
+  private async handleInboundDeposit(
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const tx = (payload.notification ?? {}) as CircleTxResource;
+    const { id: circleTxId, state, walletId } = tx;
+    const amount = tx.amounts?.[0];
+
+    if (!state || !walletId || amount === undefined) {
+      this.logger.warn(
+        'Circle webhook: inbound notification missing state/walletId/amount',
+      );
+      return;
+    }
+
+    // Only act on a confirmed inbound transfer.
+    if (!CONFIRMED_STATES.has(state)) {
+      this.logger.log(
+        `Circle webhook: inbound to wallet ${walletId} non-terminal state=${state}`,
+      );
+      return;
+    }
+
+    const amountUsdc = new Prisma.Decimal(amount);
+    const deposit = await this.prisma.cryptoDeposit.findFirst({
+      where: {
+        walletId,
+        status: CryptoDepositStatus.PENDING,
+        amountUsdc: { lte: amountUsdc },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    if (!deposit) {
+      this.logger.log(
+        `Circle webhook: inbound USDC to wallet ${walletId} (amount=${amount}) matched no pending deposit — ignoring`,
+      );
+      return;
+    }
+
+    // Mark the deposit confirmed and settle the transaction + tickets in
+    // one write. Idempotent: the transaction status guard makes a
+    // re-delivered inbound a no-op (returns no tickets to enqueue).
+    const tickets = await this.prisma.$transaction(async (db) => {
+      await db.cryptoDeposit.update({
+        where: { id: deposit.id },
+        data: {
+          status: CryptoDepositStatus.CONFIRMED,
+          circleTransactionId: circleTxId,
+          txHash: tx.txHash,
+        },
+      });
+
+      const transaction = await db.transaction.findUnique({
+        where: { id: deposit.transactionId },
+      });
+      if (!transaction || transaction.status !== TransactionStatus.PENDING) {
+        return [] as { id: string; eventId: string }[];
+      }
+
+      await db.transaction.update({
+        where: { id: transaction.id },
+        data: {
+          status: TransactionStatus.SUCCESS,
+          providerReference: circleTxId,
+        },
+      });
+
+      return db.ticket.findMany({
+        where: { transactionId: transaction.id },
+        select: { id: true, eventId: true },
+      });
+    });
+
+    // Enqueue mints after the settlement commits.
+    for (const ticket of tickets) {
+      await this.mintQueue.enqueueMint(ticket.id, ticket.eventId);
+    }
+
     this.logger.log(
-      `Circle webhook: no handler for type=${notificationType} (Phase 2)`,
+      `Crypto deposit settled (deposit=${deposit.id}, txn=${deposit.transactionId}, mints=${tickets.length})`,
     );
   }
 
-  private async handleTransaction(
+  private async handleContractExecution(
     payload: Record<string, unknown>,
   ): Promise<void> {
     const tx = (payload.notification ?? {}) as CircleTxResource;

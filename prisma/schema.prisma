@@ -86,6 +86,12 @@ enum WebhookSource {
   MONNIFY
 }
 
+enum CryptoDepositStatus {
+  PENDING
+  CONFIRMED
+  EXPIRED
+}
+
 enum NotificationChannel {
   EMAIL
   SMS
@@ -341,13 +347,45 @@ model Transaction {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  ticket  Ticket?  @relation("LegacyTicketTransaction", fields: [ticketId], references: [id])
-  tickets Ticket[] @relation("TransactionTickets")
-  event   Event    @relation(fields: [eventId], references: [id])
+  ticket        Ticket?        @relation("LegacyTicketTransaction", fields: [ticketId], references: [id])
+  tickets       Ticket[]       @relation("TransactionTickets")
+  event         Event          @relation(fields: [eventId], references: [id])
+  cryptoDeposit CryptoDeposit?
 
   @@index([providerReference])
   @@index([eventId])
   @@map("transactions")
+}
+
+/// A pending crypto (USDC) deposit for a ticket purchase. The buyer is
+/// given `address` + `amountUsdc` on `chain`; when Circle reports a
+/// matching inbound transfer to `walletId`, the linked transaction is
+/// settled and minting proceeds.
+///
+/// MVP note: `walletId` is the buyer's own per-chain Circle wallet, so
+/// funds land in HostIT-custodied buyer wallets — sweeping to treasury
+/// / settlement is a follow-up tied to payouts (#68).
+model CryptoDeposit {
+  id                  String              @id @default(uuid()) @db.Uuid
+  transactionId       String              @unique @map("transaction_id") @db.Uuid
+  chain               String
+  /// Circle wallet id that should receive the deposit (match key).
+  walletId            String              @map("wallet_id")
+  address             String
+  amountUsdc          Decimal             @map("amount_usdc") @db.Decimal
+  usdcAddress         String              @map("usdc_address")
+  status              CryptoDepositStatus @default(PENDING)
+  /// Circle transaction id of the matched inbound transfer, once seen.
+  circleTransactionId String?             @map("circle_transaction_id")
+  txHash              String?             @map("tx_hash")
+  expiresAt           DateTime            @map("expires_at")
+  createdAt           DateTime            @default(now()) @map("created_at")
+  updatedAt           DateTime            @updatedAt @map("updated_at")
+
+  transaction Transaction @relation(fields: [transactionId], references: [id])
+
+  @@index([walletId, status])
+  @@map("crypto_deposits")
 }
 
 model Payout {
