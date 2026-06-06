@@ -8,6 +8,8 @@ import {
   WalletCreationStatus,
 } from '@prisma/client';
 import { Job } from 'bullmq';
+import { Prisma } from '@prisma/client';
+import { id as keccak256Utf8 } from 'ethers';
 import { PrismaService } from '../prisma/prisma.service';
 import { CircleContractService } from './circle-contract.service';
 import { MintFinalizerService } from './mint-finalizer.service';
@@ -18,32 +20,18 @@ import {
 } from './mint-queue.service';
 
 /**
- * On-chain FeeType enum (LibAddressesAndFees.sol). Mirrors the table
- * in event-publish.processor — both flows speak symbolic names but
- * the Diamond expects the numeric code. The mint must use the *same*
- * code that was used at createTicket for this ticketType, otherwise
- * the contract rejects the call.
+ * Consumes `ticket-mint` jobs and issues the on-chain ticket NFT via
+ * `mintFiatTicket(uint64 ticketId, address buyer, uint256 amount,
+ * bytes32 paymentId)`, signed by the treasury — which is the Diamond's
+ * `trustedBackend`. This is a free issuance (no on-chain fee): payment
+ * was already collected off-chain (fiat gateway) or into HostIT custody
+ * (USDC deposit, #69), and organizer settlement runs separately (#68).
+ * `amount` (the off-chain price in kobo) is recorded on-chain via
+ * `getTicketFiatRevenue`, and `paymentId` makes mints replay-safe.
  *
- * Today every ticket type is created with FeeType=ETH (placeholder
- * pricing in events.service). When real pricing/fee-types land, this
- * needs to read the fee code off the TicketType or Transaction row.
- */
-const FEE_TYPE_BY_NAME: Record<string, number> = {
-  ETH: 1,
-  WETH: 2,
-  USDT: 3,
-  USDC: 4,
-  USDT0: 5,
-  EURC: 6,
-  GHO: 7,
-  LINK: 8,
-  LSK: 9,
-};
-const DEFAULT_FEE_TYPE = FEE_TYPE_BY_NAME.ETH;
-
-/**
- * Consumes `ticket-mint` jobs and runs `mintTicket(uint64 ticketId,
- * uint8 feeType, address buyer)` on the Diamond via Circle SCP.
+ * (The payable `mintTicket` path — buyer pays the contract directly and
+ * the Diamond splits on-chain — is reserved for a future on-chain
+ * settlement mode.)
  *
  * Completion is handled in one of two ways:
  *  - `circle.webhooksEnabled` ON (#65): submit and return — the Circle
@@ -156,14 +144,24 @@ export class MintTicketProcessor extends WorkerHost {
     }
 
     try {
+      // Off-chain price recorded on-chain in the smallest fiat unit
+      // (kobo for NGN). paymentId is deterministic per ticket so a
+      // retry reuses it — the contract's replay guard + our tokenId
+      // idempotency check keep a re-mint safe.
+      const amountMinor = new Prisma.Decimal(ticket.ticketType.price)
+        .mul(100)
+        .toFixed(0);
+      const paymentId = keccak256Utf8(ticket.reference);
+
       const args = [
         ticket.ticketType.onChainTicketId,
-        DEFAULT_FEE_TYPE,
         wallet.address,
+        amountMinor,
+        paymentId,
       ];
 
       const { circleTransactionId } = await this.circle.executeContract({
-        method: 'mintTicket',
+        method: 'mintFiatTicket',
         args,
         chain: ticket.event.chain,
         txType: BlockchainTxType.MINT,
@@ -173,7 +171,7 @@ export class MintTicketProcessor extends WorkerHost {
       });
 
       this.logger.log(
-        `mintTicket submitted (ticket=${ticket.id}, circleTxId=${circleTransactionId})`,
+        `mintFiatTicket submitted (ticket=${ticket.id}, circleTxId=${circleTransactionId})`,
       );
 
       // When the Circle webhook is wired (#65) it is authoritative for
