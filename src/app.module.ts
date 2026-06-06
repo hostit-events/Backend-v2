@@ -29,6 +29,7 @@ import {
   blockradarConfig,
   blockchainConfig,
   circleConfig,
+  cryptoConfig,
   notificationsConfig,
   envValidationSchema,
 } from './config';
@@ -47,6 +48,7 @@ import {
         blockradarConfig,
         blockchainConfig,
         circleConfig,
+        cryptoConfig,
         notificationsConfig,
       ],
       validationSchema: envValidationSchema,

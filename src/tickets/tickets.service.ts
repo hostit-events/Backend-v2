@@ -17,6 +17,7 @@ import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaymentsService } from '../payments/payments.service';
+import { CryptoCheckoutService } from '../payments/crypto-checkout.service';
 import { WalletsService } from '../wallets/wallets.service';
 import { ConfigService } from '@nestjs/config';
 import { PurchaseTicketDto } from './dto/purchase-ticket.dto';
@@ -39,6 +40,7 @@ export class TicketsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly payments: PaymentsService,
+    private readonly cryptoCheckout: CryptoCheckoutService,
     private readonly wallets: WalletsService,
     configService: ConfigService,
   ) {
@@ -247,6 +249,28 @@ export class TicketsService {
         provider: dto.paymentProvider,
         tickets,
         free: true,
+      };
+    }
+
+    // Crypto checkout — no gateway redirect. Return a USDC deposit
+    // instruction; the `transactions.inbound` webhook settles the
+    // transaction and triggers minting (see CircleWebhookProcessor).
+    if (dto.paymentProvider === PaymentProvider.CRYPTO) {
+      const deposit = await this.cryptoCheckout.createDepositIntent({
+        transactionId: transaction.id,
+        buyerId,
+        chain: event.chain,
+        amountNgn: totalAmount,
+      });
+      return {
+        reference: transaction.reference,
+        checkoutUrl: null,
+        amount: Number(totalAmount),
+        currency: 'NGN',
+        provider: dto.paymentProvider,
+        tickets,
+        free: false,
+        crypto: deposit,
       };
     }
 

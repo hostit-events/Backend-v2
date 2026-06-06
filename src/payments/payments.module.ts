@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
+import { CryptoCheckoutService } from './crypto-checkout.service';
 import { MonnifyProvider } from './providers/monnify.provider';
 import { PaystackProvider } from './providers/paystack.provider';
 
@@ -10,7 +11,17 @@ import { PaystackProvider } from './providers/paystack.provider';
  */
 @Module({
   controllers: [PaymentsController],
-  providers: [PaymentsService, PaystackProvider, MonnifyProvider],
-  exports: [PaymentsService, PaystackProvider, MonnifyProvider],
+  providers: [
+    PaymentsService,
+    CryptoCheckoutService,
+    PaystackProvider,
+    MonnifyProvider,
+  ],
+  exports: [
+    PaymentsService,
+    CryptoCheckoutService,
+    PaystackProvider,
+    MonnifyProvider,
+  ],
 })
 export class PaymentsModule {}
