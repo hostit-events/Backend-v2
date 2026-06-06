@@ -9,15 +9,28 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
 import { ApiExcludeController } from '@nestjs/swagger';
-import { PaymentProvider } from '@prisma/client';
+import { PaymentProvider, Prisma, WebhookSource } from '@prisma/client';
+import { Queue } from 'bullmq';
 import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
 import { Public } from '../common/decorators/public.decorator';
 import { PaystackProvider } from '../payments/providers/paystack.provider';
 import { MonnifyProvider } from '../payments/providers/monnify.provider';
+import { PrismaService } from '../prisma/prisma.service';
+import {
+  CircleWebhookService,
+  type CircleNotification,
+} from '../circle/circle-webhook.service';
+import {
+  CIRCLE_WEBHOOK_JOB,
+  CIRCLE_WEBHOOK_QUEUE,
+  type CircleWebhookJobData,
+} from '../blockchain/circle-webhook.queue';
 import { WebhooksService } from './webhooks.service';
 import { MonnifyIpGuard } from './guards/monnify-ip.guard';
+import { CircleIpGuard } from './guards/circle-ip.guard';
 
 /**
  * Provider webhooks. All endpoints are public — auth is by signature
@@ -33,6 +46,10 @@ export class WebhooksController {
     private readonly paystack: PaystackProvider,
     private readonly monnify: MonnifyProvider,
     private readonly webhooks: WebhooksService,
+    private readonly prisma: PrismaService,
+    private readonly circleVerifier: CircleWebhookService,
+    @InjectQueue(CIRCLE_WEBHOOK_QUEUE)
+    private readonly circleQueue: Queue<CircleWebhookJobData>,
   ) {}
 
   @Public()
@@ -164,6 +181,82 @@ export class WebhooksController {
         `Monnify webhook: ignoring eventType=${eventType ?? 'unknown'}`,
       );
     }
+
+    return { received: true };
+  }
+
+  /**
+   * Circle wallet/transaction lifecycle webhooks (#65). Authenticated by
+   * ECDSA signature (and optional IP allowlist). Verified deliveries are
+   * persisted to the WebhookEvent audit log and processed async via the
+   * `circle-webhook` queue — we always return 200 immediately.
+   *
+   * Replay-safe at three layers: the (source, notificationId) unique
+   * index here, the processedAt guard in the processor, and the
+   * idempotent reconcile()/finalize() it calls.
+   */
+  @Public()
+  @UseGuards(CircleIpGuard)
+  @Post('circle')
+  @HttpCode(HttpStatus.OK)
+  async circleWebhook(
+    @Req() req: RawBodyRequest<Request>,
+    @Headers('x-circle-signature') signature: string,
+    @Headers('x-circle-key-id') keyId: string,
+  ): Promise<{ received: true }> {
+    const raw = req.rawBody;
+    if (!raw) {
+      this.logger.error('Circle webhook: raw body missing');
+      throw new ForbiddenException('Invalid webhook');
+    }
+
+    const rawStr = raw.toString('utf8');
+    const valid = await this.circleVerifier.verify(rawStr, signature, keyId);
+    if (!valid) {
+      this.logger.warn('Circle webhook: signature verification failed');
+      throw new ForbiddenException('Invalid signature');
+    }
+
+    const body = JSON.parse(rawStr) as CircleNotification;
+
+    // Persist the verified delivery to the audit log. The unique
+    // (source, notificationId) index dedups re-deliveries; a duplicate
+    // is acknowledged 200 without re-enqueueing.
+    let event: { id: string };
+    try {
+      event = await this.prisma.webhookEvent.create({
+        data: {
+          source: WebhookSource.CIRCLE,
+          notificationId: body.notificationId ?? null,
+          type: body.notificationType ?? null,
+          payload: body as unknown as Prisma.InputJsonValue,
+          signatureValid: true,
+        },
+        select: { id: true },
+      });
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        this.logger.log(
+          `Circle webhook: duplicate notificationId=${body.notificationId} — no-op`,
+        );
+        return { received: true };
+      }
+      throw err;
+    }
+
+    await this.circleQueue.add(
+      CIRCLE_WEBHOOK_JOB,
+      { webhookEventId: event.id },
+      {
+        attempts: 5,
+        backoff: { type: 'exponential', delay: 5_000 },
+        removeOnComplete: { age: 60 * 60 * 24, count: 1000 },
+        removeOnFail: { age: 60 * 60 * 24 * 7 },
+      },
+    );
 
     return { received: true };
   }

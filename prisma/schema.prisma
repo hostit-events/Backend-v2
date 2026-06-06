@@ -80,6 +80,12 @@ enum BlockchainTxStatus {
   FAILED
 }
 
+enum WebhookSource {
+  CIRCLE
+  PAYSTACK
+  MONNIFY
+}
+
 enum NotificationChannel {
   EMAIL
   SMS
@@ -417,4 +423,30 @@ model Notification {
   @@index([userId])
   @@index([ticketId])
   @@map("notifications")
+}
+
+/// Raw inbound webhook audit log. Every accepted webhook (signature
+/// verified) is persisted here before async processing so we have a
+/// replayable, auditable record. Dedup is on (source, notificationId):
+/// re-delivered notifications with the same id collapse to one row, and
+/// the controller treats the duplicate as a no-op. `notificationId` is
+/// nullable because not every provider payload carries one — Postgres
+/// treats NULLs as distinct, so id-less events are always stored.
+model WebhookEvent {
+  id             String        @id @default(uuid()) @db.Uuid
+  source         WebhookSource
+  notificationId String?       @map("notification_id")
+  /// Provider event type, e.g. Circle `transactions.outbound`,
+  /// `webhooks.test`; Paystack `charge.success`.
+  type           String?
+  payload        Json
+  signatureValid Boolean       @default(false) @map("signature_valid")
+  /// Set when the async processor finishes handling this event.
+  processedAt    DateTime?     @map("processed_at")
+  error          String?
+  createdAt      DateTime      @default(now()) @map("created_at")
+
+  @@unique([source, notificationId])
+  @@index([createdAt])
+  @@map("webhook_events")
 }
