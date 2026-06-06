@@ -131,6 +131,8 @@ export class MintFinalizerService {
       throw new Error(`No receipt for tx ${txHash} on ${chain}`);
     }
 
+    // Crypto mints emit `TicketMinted`; fiat issuance emits
+    // `FiatTicketMinted`. Both carry the per-mint `tokenId`.
     let minted: LogDescription | null = null;
     for (const log of receipt.logs) {
       try {
@@ -138,7 +140,10 @@ export class MintFinalizerService {
           topics: Array.from(log.topics),
           data: log.data,
         });
-        if (parsed?.name === 'TicketMinted') {
+        if (
+          parsed?.name === 'TicketMinted' ||
+          parsed?.name === 'FiatTicketMinted'
+        ) {
           minted = parsed;
           break;
         }
@@ -149,7 +154,7 @@ export class MintFinalizerService {
 
     if (!minted) {
       throw new Error(
-        `TicketMinted event not found in receipt for tx ${txHash}`,
+        `TicketMinted/FiatTicketMinted event not found in receipt for tx ${txHash}`,
       );
     }
     return minted.args.tokenId as bigint;
