@@ -54,20 +54,28 @@ export class OrganizerService {
       dto.bankCode,
     );
 
-    const subaccount = await this.paystack
-      .createSubaccount({
-        businessName: bankData.accountName,
-        bankCode: dto.bankCode,
-        accountNumber: bankData.accountNumber,
-      })
-      .catch((err: Error) => {
-        this.logger.warn(
-          `Paystack subaccount creation failed for user ${userId}: ${err.message}`,
-        );
-        throw new BadRequestException(
-          'Could not create Paystack subaccount. Please verify the bank details and try again.',
-        );
-      });
+    let subaccount: { subaccountCode: string; id: number | null };
+    if (this.shouldMockProviderSubaccount()) {
+      subaccount = { subaccountCode: `DEV_PAYSTACK_${userId}`, id: null };
+      this.logger.warn(
+        `[DEV] Mocking Paystack subaccount for user ${userId} (SKIP_BANK_VERIFICATION=true) — no real subaccount created`,
+      );
+    } else {
+      subaccount = await this.paystack
+        .createSubaccount({
+          businessName: bankData.accountName,
+          bankCode: dto.bankCode,
+          accountNumber: bankData.accountNumber,
+        })
+        .catch((err: Error) => {
+          this.logger.warn(
+            `Paystack subaccount creation failed for user ${userId}: ${err.message}`,
+          );
+          throw new BadRequestException(
+            'Could not create Paystack subaccount. Please verify the bank details and try again.',
+          );
+        });
+    }
 
     await this.prisma.organizerProfile.update({
       where: { id: profile.id },
@@ -129,20 +137,32 @@ export class OrganizerService {
       accountName = bankData.accountName;
     }
 
-    const subAccount = await this.monnify
-      .createSubAccount({
-        bankCode,
-        accountNumber,
-        email: user.email,
-      })
-      .catch((err: Error) => {
-        this.logger.warn(
-          `Monnify sub-account creation failed for user ${userId}: ${err.message}`,
-        );
-        throw new BadRequestException(
-          'Could not create Monnify sub-account. Please verify the bank details and try again.',
-        );
-      });
+    let subAccount: { subAccountCode: string; accountName: string };
+    if (this.shouldMockProviderSubaccount()) {
+      subAccount = {
+        subAccountCode: `DEV_MONNIFY_${userId}`,
+        accountName: accountName ?? `${user.firstName} ${user.lastName}`,
+      };
+      accountName ??= subAccount.accountName;
+      this.logger.warn(
+        `[DEV] Mocking Monnify sub-account for user ${userId} (SKIP_BANK_VERIFICATION=true) — no real sub-account created`,
+      );
+    } else {
+      subAccount = await this.monnify
+        .createSubAccount({
+          bankCode,
+          accountNumber,
+          email: user.email,
+        })
+        .catch((err: Error) => {
+          this.logger.warn(
+            `Monnify sub-account creation failed for user ${userId}: ${err.message}`,
+          );
+          throw new BadRequestException(
+            'Could not create Monnify sub-account. Please verify the bank details and try again.',
+          );
+        });
+    }
 
     await this.prisma.organizerProfile.update({
       where: { id: profile.id },
@@ -168,6 +188,24 @@ export class OrganizerService {
   }
 
   // ---------- internals ----------
+
+  /**
+   * DEV ONLY. When SKIP_BANK_VERIFICATION is on (and we're not in
+   * production), short-circuit provider subaccount creation and return
+   * a deterministic fake code. This lets the enable flow complete
+   * end-to-end without valid Paystack/Monnify sandbox bank data, which
+   * their name-enquiry rejects for arbitrary test accounts.
+   *
+   * Safe by construction: the NODE_ENV guard means this can never
+   * trigger in production, even if SKIP_BANK_VERIFICATION leaks into a
+   * prod env. main.ts additionally refuses to boot in that case.
+   */
+  private shouldMockProviderSubaccount(): boolean {
+    return (
+      this.configService.get<string>('SKIP_BANK_VERIFICATION') === 'true' &&
+      this.configService.get<string>('NODE_ENV') !== 'production'
+    );
+  }
 
   private async loadOrganizer(userId: string) {
     const user = await this.prisma.user.findUnique({

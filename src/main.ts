@@ -23,6 +23,24 @@ async function bootstrap() {
   const configService = app.get(ConfigService);
   const port = configService.get<number>('app.port', 3000);
 
+  // Fail-fast guard: dev bypass flags must NEVER be active in production.
+  // Each bypass already self-disables when NODE_ENV=production, but a
+  // misconfigured prod env (e.g. SKIP_BANK_VERIFICATION=true copied over)
+  // should crash loudly on boot rather than risk silently mocking KYC /
+  // provider subaccount creation. See OrganizerService.
+  if (process.env.NODE_ENV === 'production') {
+    const activeBypasses = [
+      'SKIP_BVN_VERIFICATION',
+      'SKIP_BANK_VERIFICATION',
+    ].filter((key) => process.env[key] === 'true');
+    if (activeBypasses.length > 0) {
+      throw new Error(
+        `Refusing to boot in production with dev bypass flag(s) set: ` +
+          `${activeBypasses.join(', ')}. Unset them before deploying.`,
+      );
+    }
+  }
+
   // Global prefix
   app.setGlobalPrefix('api');
 
