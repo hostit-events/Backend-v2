@@ -1,11 +1,13 @@
-import { NotFoundException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { TicketStatus, UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaymentsService } from '../payments/payments.service';
 import { CryptoCheckoutService } from '../payments/crypto-checkout.service';
 import { WalletsService } from '../wallets/wallets.service';
 import { TicketsService } from './tickets.service';
 import { QueryMyTicketsDto } from './dto/query-my-tickets.dto';
+import { VerifyTicketDto } from './dto/verify-ticket.dto';
 
 /** A row shaped like TICKET_DETAIL_INCLUDE + the raw buyer columns. */
 function sampleTicket(overrides: Record<string, unknown> = {}) {
@@ -148,5 +150,126 @@ describe('TicketsService.findByReference', () => {
     await expect(svc.findByReference('nope')).rejects.toBeInstanceOf(
       NotFoundException,
     );
+  });
+});
+
+describe('TicketsService.verifyTicket', () => {
+  const EVENT_ID = 'event-1';
+  const ORGANIZER_ID = 'organizer-1';
+  const HOUR = 60 * 60 * 1000;
+
+  /** A row shaped like verifyTicket's include. Event window straddles now. */
+  function verifyRow(overrides: Record<string, unknown> = {}) {
+    const now = Date.now();
+    return {
+      reference: 'HOSTIT_TKT_A3F2B9C1',
+      status: TicketStatus.CONFIRMED,
+      buyerName: 'Jane Doe',
+      tokenId: 42,
+      checkedInAt: null,
+      eventId: EVENT_ID,
+      ticketType: { name: 'VIP' },
+      event: {
+        id: EVENT_ID,
+        organizerId: ORGANIZER_ID,
+        startTime: new Date(now - HOUR),
+        endTime: new Date(now + HOUR),
+      },
+      ...overrides,
+    };
+  }
+
+  const organizer = { id: ORGANIZER_ID, role: UserRole.ORGANIZER };
+  const body: VerifyTicketDto = { eventId: EVENT_ID };
+
+  function svcWith(row: unknown, update = jest.fn()) {
+    return makeService({
+      findUnique: jest.fn().mockResolvedValue(row),
+      update,
+    });
+  }
+
+  it('404 when the reference is unknown', async () => {
+    const svc = svcWith(null);
+    await expect(
+      svc.verifyTicket('nope', body, organizer),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('403 when caller is neither admin nor the event organizer', async () => {
+    const svc = svcWith(verifyRow());
+    await expect(
+      svc.verifyTicket('HOSTIT_TKT_A3F2B9C1', body, {
+        id: 'someone-else',
+        role: UserRole.ORGANIZER,
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('allows an admin who does not own the event', async () => {
+    const svc = svcWith(verifyRow());
+    const res = await svc.verifyTicket('HOSTIT_TKT_A3F2B9C1', body, {
+      id: 'admin-9',
+      role: UserRole.ADMIN,
+    });
+    expect(res.valid).toBe(true);
+  });
+
+  it('valid:true for a CONFIRMED ticket inside the event window', async () => {
+    const svc = svcWith(verifyRow());
+    const res = await svc.verifyTicket('HOSTIT_TKT_A3F2B9C1', body, organizer);
+    expect(res).toMatchObject({
+      valid: true,
+      status: TicketStatus.CONFIRMED,
+      ticketType: 'VIP',
+      tokenId: 42,
+      message: 'Ticket is valid for entry.',
+    });
+  });
+
+  it('valid:false when the ticket belongs to a different event', async () => {
+    const svc = svcWith(verifyRow({ eventId: 'other-event' }));
+    const res = await svc.verifyTicket('HOSTIT_TKT_A3F2B9C1', body, organizer);
+    expect(res).toMatchObject({
+      valid: false,
+      message: 'Ticket is not valid for this event.',
+    });
+  });
+
+  it('valid:false outside the event window', async () => {
+    const now = Date.now();
+    const svc = svcWith(
+      verifyRow({
+        event: {
+          id: EVENT_ID,
+          organizerId: ORGANIZER_ID,
+          startTime: new Date(now + HOUR),
+          endTime: new Date(now + 2 * HOUR),
+        },
+      }),
+    );
+    const res = await svc.verifyTicket('HOSTIT_TKT_A3F2B9C1', body, organizer);
+    expect(res).toMatchObject({
+      valid: false,
+      message: 'Event is not currently active.',
+    });
+  });
+
+  it.each([
+    [TicketStatus.USED, 'Ticket has already been used.'],
+    [TicketStatus.PENDING, 'Ticket payment is pending.'],
+    [TicketStatus.CANCELLED, 'Ticket has been cancelled.'],
+    [TicketStatus.REFUNDED, 'Ticket has been refunded.'],
+  ])('valid:false for status %s', async (status, message) => {
+    const svc = svcWith(verifyRow({ status }));
+    const res = await svc.verifyTicket('HOSTIT_TKT_A3F2B9C1', body, organizer);
+    expect(res).toMatchObject({ valid: false, message });
+  });
+
+  it('never modifies ticket state', async () => {
+    const update = jest.fn();
+    const svc = svcWith(verifyRow(), update);
+    await svc.verifyTicket('HOSTIT_TKT_A3F2B9C1', body, organizer);
+    expect(update).not.toHaveBeenCalled();
   });
 });

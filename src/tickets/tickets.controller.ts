@@ -10,12 +10,15 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { UserRole } from '@prisma/client';
 import { Public } from '../common/decorators/public.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Roles } from '../common/decorators/roles.decorator';
 import { OptionalJwtAuthGuard } from '../common/guards/optional-jwt-auth.guard';
 import { TicketsService } from './tickets.service';
 import { PurchaseTicketDto } from './dto/purchase-ticket.dto';
 import { QueryMyTicketsDto } from './dto/query-my-tickets.dto';
+import { VerifyTicketDto } from './dto/verify-ticket.dto';
 
 @ApiTags('Tickets')
 @Controller('tickets')
@@ -53,5 +56,20 @@ export class TicketsController {
   @ApiOperation({ summary: 'Get ticket by reference (public)' })
   findByReference(@Param('reference') reference: string) {
     return this.tickets.findByReference(reference);
+  }
+
+  // Read-only door check — no state change. ORGANIZER/ADMIN only; the
+  // service further pins it to the organizer who owns the event.
+  @Post(':reference/verify')
+  @Roles(UserRole.ORGANIZER, UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Verify a ticket at the door (read-only)' })
+  verify(
+    @Param('reference') reference: string,
+    @Body() dto: VerifyTicketDto,
+    @CurrentUser() actor: { id: string; role: UserRole },
+  ) {
+    return this.tickets.verifyTicket(reference, dto, actor);
   }
 }
