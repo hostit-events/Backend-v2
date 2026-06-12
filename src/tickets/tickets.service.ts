@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -21,6 +22,8 @@ import { CryptoCheckoutService } from '../payments/crypto-checkout.service';
 import { WalletsService } from '../wallets/wallets.service';
 import { ConfigService } from '@nestjs/config';
 import { PurchaseTicketDto } from './dto/purchase-ticket.dto';
+import { QueryMyTicketsDto } from './dto/query-my-tickets.dto';
+import { VerifyTicketDto } from './dto/verify-ticket.dto';
 import { DEFAULT_FEE_BEARER, PLATFORM_FEE_RATE } from '../payments/constants';
 import type { PaymentSplit } from '../payments/interfaces/payment-provider.interface';
 import {
@@ -31,6 +34,33 @@ import {
 interface PurchaseContext {
   buyerId?: string;
 }
+
+/**
+ * Relations + columns hydrated for the ticket-detail responses
+ * (GET /tickets/mine and GET /tickets/:reference). Buyer email/phone
+ * are deliberately NOT selected on the nested relations — the public
+ * by-reference response must never leak them.
+ */
+const TICKET_DETAIL_INCLUDE = {
+  ticketType: { select: { name: true, description: true, price: true } },
+  event: {
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      venue: true,
+      location: true,
+      startTime: true,
+      endTime: true,
+      coverImage: true,
+      organizer: { select: { firstName: true, lastName: true } },
+    },
+  },
+} satisfies Prisma.TicketInclude;
+
+type TicketWithDetail = Prisma.TicketGetPayload<{
+  include: typeof TICKET_DETAIL_INCLUDE;
+}>;
 
 @Injectable()
 export class TicketsService {
@@ -49,6 +79,191 @@ export class TicketsService {
     this.checkoutCallbackUrl =
       configService.get<string>('app.paymentCallbackUrl') ??
       'http://localhost:3000/api/payments/callback';
+  }
+
+  /**
+   * Tickets belonging to the authenticated buyer, newest first, with
+   * optional status / event filters. Returns an empty list (never an
+   * error) when the buyer has no tickets.
+   */
+  async findMyTickets(buyerId: string, query: QueryMyTicketsDto) {
+    const where: Prisma.TicketWhereInput = { buyerId };
+    if (query.status) {
+      where.status = query.status;
+    }
+    if (query.eventId) {
+      where.eventId = query.eventId;
+    }
+
+    const [tickets, total] = await Promise.all([
+      this.prisma.ticket.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: query.skip,
+        take: query.limit,
+        include: TICKET_DETAIL_INCLUDE,
+      }),
+      this.prisma.ticket.count({ where }),
+    ]);
+
+    return {
+      tickets: tickets.map((ticket) => this.serializeTicket(ticket)),
+      pagination: {
+        page: query.page,
+        limit: query.limit,
+        total,
+        totalPages: Math.ceil(total / query.limit),
+      },
+    };
+  }
+
+  /**
+   * Public ticket lookup by reference — backs QR codes, email links and
+   * confirmation pages. Exposes buyer name (needed for door checks) and
+   * the organizer name, but never buyer email/phone.
+   */
+  async findByReference(reference: string) {
+    const ticket = await this.prisma.ticket.findUnique({
+      where: { reference },
+      include: TICKET_DETAIL_INCLUDE,
+    });
+    if (!ticket) {
+      throw new NotFoundException('Ticket not found');
+    }
+    return this.serializeTicket(ticket, {
+      includeBuyer: true,
+      includeOrganizer: true,
+    });
+  }
+
+  /**
+   * Read-only door check. Confirms the caller is the event's organizer
+   * (or an admin), then reports whether the ticket is valid for entry —
+   * without changing any state. Pure DB lookup, no chain call; live
+   * on-chain verification belongs to the QR/check-in path.
+   */
+  async verifyTicket(
+    reference: string,
+    dto: VerifyTicketDto,
+    actor: { id: string; role: UserRole },
+  ) {
+    const ticket = await this.prisma.ticket.findUnique({
+      where: { reference },
+      include: {
+        ticketType: { select: { name: true } },
+        event: {
+          select: {
+            id: true,
+            organizerId: true,
+            startTime: true,
+            endTime: true,
+          },
+        },
+      },
+    });
+    if (!ticket) {
+      throw new NotFoundException('Ticket not found');
+    }
+
+    // Authorization: platform admins, or the organizer who owns the
+    // event. The @Roles guard only proves the caller *has* the ORGANIZER
+    // role globally — this pins it to this specific event.
+    const isAdmin = actor.role === UserRole.ADMIN;
+    const ownsEvent = ticket.event.organizerId === actor.id;
+    if (!isAdmin && !ownsEvent) {
+      throw new ForbiddenException(
+        'You are not allowed to verify tickets for this event',
+      );
+    }
+
+    const base = {
+      reference: ticket.reference,
+      status: ticket.status,
+      buyerName: ticket.buyerName,
+      ticketType: ticket.ticketType.name,
+      tokenId: ticket.tokenId,
+      checkedInAt: ticket.checkedInAt,
+    };
+    const invalid = (message: string) => ({
+      valid: false as const,
+      ...base,
+      message,
+    });
+
+    // Ticket must belong to the event being checked at this door.
+    if (ticket.eventId !== dto.eventId) {
+      return invalid('Ticket is not valid for this event.');
+    }
+
+    switch (ticket.status) {
+      case TicketStatus.PENDING:
+        return invalid('Ticket payment is pending.');
+      case TicketStatus.CANCELLED:
+        return invalid('Ticket has been cancelled.');
+      case TicketStatus.REFUNDED:
+        return invalid('Ticket has been refunded.');
+      case TicketStatus.USED:
+        return invalid('Ticket has already been used.');
+      case TicketStatus.CONFIRMED: {
+        const now = new Date();
+        if (now < ticket.event.startTime || now > ticket.event.endTime) {
+          return invalid('Event is not currently active.');
+        }
+        return {
+          valid: true as const,
+          ...base,
+          message: 'Ticket is valid for entry.',
+        };
+      }
+      default:
+        return invalid('Ticket is not valid for entry.');
+    }
+  }
+
+  /**
+   * Shared ticket response shape for the detail endpoints. `includeBuyer`
+   * adds the buyer name; `includeOrganizer` adds the organizer name —
+   * both used by the public by-reference response, omitted from a
+   * buyer's own list.
+   */
+  private serializeTicket(
+    ticket: TicketWithDetail,
+    opts: { includeBuyer?: boolean; includeOrganizer?: boolean } = {},
+  ) {
+    return {
+      id: ticket.id,
+      reference: ticket.reference,
+      status: ticket.status,
+      ...(opts.includeBuyer ? { buyerName: ticket.buyerName } : {}),
+      qrCode: ticket.qrCode,
+      tokenId: ticket.tokenId,
+      deliveryChannel: ticket.deliveryChannel,
+      checkedInAt: ticket.checkedInAt,
+      createdAt: ticket.createdAt,
+      ticketType: {
+        name: ticket.ticketType.name,
+        description: ticket.ticketType.description,
+        price: Number(ticket.ticketType.price),
+      },
+      event: {
+        id: ticket.event.id,
+        name: ticket.event.name,
+        slug: ticket.event.slug,
+        venue: ticket.event.venue,
+        location: ticket.event.location,
+        startTime: ticket.event.startTime,
+        endTime: ticket.event.endTime,
+        coverImage: ticket.event.coverImage,
+        ...(opts.includeOrganizer
+          ? {
+              organizer: {
+                firstName: ticket.event.organizer.firstName,
+                lastName: ticket.event.organizer.lastName,
+              },
+            }
+          : {}),
+      },
+    };
   }
 
   async purchase(dto: PurchaseTicketDto, ctx: PurchaseContext = {}) {
