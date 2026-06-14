@@ -4,6 +4,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Param,
   Post,
   Query,
 } from '@nestjs/common';
@@ -40,6 +41,18 @@ export class OrganizerController {
     @Query() query: QueryOrganizerEventsDto,
   ) {
     return this.organizer.getMyEvents(userId, query);
+  }
+
+  @Get('events/:id/analytics')
+  @Roles(UserRole.ORGANIZER, UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Event analytics (daily sales, breakdowns, check-in rate)',
+  })
+  getEventAnalytics(
+    @Param('id') id: string,
+    @CurrentUser() actor: { id: string; role: UserRole },
+  ) {
+    return this.organizer.getEventAnalytics(id, actor);
   }
 
   @Post('providers/paystack/enable')

@@ -7,7 +7,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { EventStatus, Prisma, TicketStatus, UserRole } from '@prisma/client';
+import {
+  EventStatus,
+  Prisma,
+  TicketStatus,
+  TransactionStatus,
+  UserRole,
+} from '@prisma/client';
 import { MonnifyProvider } from '../payments/providers/monnify.provider';
 import { PaystackService } from '../paystack/paystack.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -20,6 +26,27 @@ const SOLD_STATUSES: TicketStatus[] = [
   TicketStatus.CONFIRMED,
   TicketStatus.USED,
 ];
+
+/** UTC YYYY-MM-DD key for a timestamp. */
+function dayKey(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/** Inclusive list of UTC day keys from `from` to `to`. */
+function eachDay(from: Date, to: Date): string[] {
+  const out: string[] = [];
+  const cur = new Date(
+    Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()),
+  );
+  const end = new Date(
+    Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate()),
+  );
+  while (cur <= end) {
+    out.push(cur.toISOString().slice(0, 10));
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+  return out;
+}
 
 /**
  * Per-provider fiat enablement for organizers.
@@ -185,6 +212,168 @@ export class OrganizerService {
         total,
         totalPages: Math.ceil(total / query.limit),
       },
+    };
+  }
+
+  /**
+   * Single-event analytics for the owning organizer (or an admin):
+   * overview KPIs, daily sales (gap-filled for chart continuity), and
+   * breakdowns by ticket type, payment provider, and payment channel.
+   *
+   * Revenue / provider / channel come from SUCCESS transactions (one row
+   * per purchase, with `channel` persisted into metadata on settlement);
+   * sold/check-in counts come from the ticket table.
+   */
+  async getEventAnalytics(
+    eventId: string,
+    actor: { id: string; role: UserRole },
+  ) {
+    const event = await this.prisma.event.findUnique({
+      where: { id: eventId },
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        startTime: true,
+        organizerId: true,
+        ticketTypes: {
+          select: { id: true, name: true, price: true, quantity: true },
+        },
+      },
+    });
+    if (!event) {
+      throw new NotFoundException('Event not found');
+    }
+    if (actor.role !== UserRole.ADMIN && event.organizerId !== actor.id) {
+      throw new ForbiddenException('You do not have access to this event');
+    }
+
+    const [txns, ticketGroups] = await Promise.all([
+      this.prisma.transaction.findMany({
+        where: { eventId, status: TransactionStatus.SUCCESS },
+        select: {
+          amount: true,
+          provider: true,
+          quantity: true,
+          createdAt: true,
+          metadata: true,
+        },
+      }),
+      this.prisma.ticket.groupBy({
+        by: ['ticketTypeId', 'status'],
+        where: { eventId },
+        _count: { _all: true },
+      }),
+    ]);
+
+    // --- revenue / provider / channel / daily, from transactions ---
+    let totalRevenue = 0;
+    const provMap = new Map<string, { amount: number; count: number }>();
+    const chanMap = new Map<string, { amount: number; count: number }>();
+    const byDay = new Map<string, { ticketsSold: number; revenue: number }>();
+
+    for (const t of txns) {
+      const amount = Number(t.amount);
+      totalRevenue += amount;
+
+      const prov = provMap.get(t.provider) ?? { amount: 0, count: 0 };
+      prov.amount += amount;
+      prov.count += t.quantity;
+      provMap.set(t.provider, prov);
+
+      const channel =
+        ((t.metadata as Record<string, unknown> | null)?.channel as
+          | string
+          | undefined) ?? 'unknown';
+      const chan = chanMap.get(channel) ?? { amount: 0, count: 0 };
+      chan.amount += amount;
+      chan.count += t.quantity;
+      chanMap.set(channel, chan);
+
+      const day = dayKey(t.createdAt);
+      const d = byDay.get(day) ?? { ticketsSold: 0, revenue: 0 };
+      d.ticketsSold += t.quantity;
+      d.revenue += amount;
+      byDay.set(day, d);
+    }
+
+    const revenueByProvider = [...provMap.entries()].map(([provider, v]) => ({
+      provider,
+      amount: v.amount,
+      count: v.count,
+    }));
+    const revenueByChannel = [...chanMap.entries()].map(([channel, v]) => ({
+      channel,
+      amount: v.amount,
+      count: v.count,
+    }));
+
+    // Gap-filled daily series: first sale day → today, zeros for empty days.
+    const dailySales: { date: string; ticketsSold: number; revenue: number }[] =
+      [];
+    if (byDay.size > 0) {
+      const first = new Date(`${[...byDay.keys()].sort()[0]}T00:00:00Z`);
+      for (const day of eachDay(first, new Date())) {
+        const d = byDay.get(day) ?? { ticketsSold: 0, revenue: 0 };
+        dailySales.push({ date: day, ...d });
+      }
+    }
+
+    // --- ticket-type breakdown + sold/check-in, from tickets ---
+    const statsByType = new Map<string, { sold: number; checkedIn: number }>();
+    for (const g of ticketGroups) {
+      const e = statsByType.get(g.ticketTypeId) ?? { sold: 0, checkedIn: 0 };
+      if (SOLD_STATUSES.includes(g.status)) {
+        e.sold += g._count._all;
+      }
+      if (g.status === TicketStatus.USED) {
+        e.checkedIn += g._count._all;
+      }
+      statsByType.set(g.ticketTypeId, e);
+    }
+
+    let totalTicketsSold = 0;
+    let totalCheckedIn = 0;
+    let totalCapacity = 0;
+    const ticketTypeBreakdown = event.ticketTypes.map((tt) => {
+      const s = statsByType.get(tt.id) ?? { sold: 0, checkedIn: 0 };
+      const price = Number(tt.price);
+      totalTicketsSold += s.sold;
+      totalCheckedIn += s.checkedIn;
+      totalCapacity += tt.quantity;
+      return {
+        name: tt.name,
+        price,
+        sold: s.sold,
+        total: tt.quantity,
+        revenue: s.sold * price,
+        percentSold: tt.quantity ? Math.round((s.sold / tt.quantity) * 100) : 0,
+      };
+    });
+
+    return {
+      event: {
+        id: event.id,
+        name: event.name,
+        status: event.status,
+        startTime: event.startTime,
+      },
+      overview: {
+        totalRevenue,
+        totalTicketsSold,
+        totalTicketsAvailable: totalCapacity - totalTicketsSold,
+        totalCheckedIn,
+        checkInRate: totalTicketsSold
+          ? Math.round((totalCheckedIn / totalTicketsSold) * 100)
+          : 0,
+        averageTicketPrice: totalTicketsSold
+          ? Math.round(totalRevenue / totalTicketsSold)
+          : 0,
+      },
+      dailySales,
+      ticketTypeBreakdown,
+      revenueByProvider,
+      revenueByChannel,
     };
   }
 
