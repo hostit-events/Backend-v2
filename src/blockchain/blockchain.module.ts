@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { TerminusModule } from '@nestjs/terminus';
 import { CircleModule } from '../circle/circle.module';
@@ -38,9 +38,10 @@ import { TicketCheckinProcessor } from './ticket-checkin.processor';
     CircleModule,
     TerminusModule,
     // Pulled in for QrCodeService (issued from the mint worker) and
-    // NotificationsService (TICKET_CONFIRMATION email). Neither module
-    // depends on Blockchain, so no cycle is introduced.
-    TicketsModule,
+    // NotificationsService (TICKET_CONFIRMATION email). TicketsModule now
+    // depends back on this module (CheckinQueueService for #24 check-in),
+    // so the edge is circular — broken with forwardRef on both sides.
+    forwardRef(() => TicketsModule),
     NotificationsModule,
     // EventsModule registers `event-publish` for the producer side;
     // this re-registration is the consumer side. BullMQ treats

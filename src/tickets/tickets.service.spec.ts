@@ -5,9 +5,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { PaymentsService } from '../payments/payments.service';
 import { CryptoCheckoutService } from '../payments/crypto-checkout.service';
 import { WalletsService } from '../wallets/wallets.service';
+import { CheckinQueueService } from '../blockchain/checkin-queue.service';
 import { TicketsService } from './tickets.service';
 import { QueryMyTicketsDto } from './dto/query-my-tickets.dto';
 import { VerifyTicketDto } from './dto/verify-ticket.dto';
+import { CheckInTicketDto } from './dto/checkin-ticket.dto';
 
 /** A row shaped like TICKET_DETAIL_INCLUDE + the raw buyer columns. */
 function sampleTicket(overrides: Record<string, unknown> = {}) {
@@ -39,7 +41,10 @@ function sampleTicket(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function makeService(prismaMock: Partial<PrismaService['ticket']>) {
+function makeService(
+  prismaMock: Partial<PrismaService['ticket']>,
+  checkinQueue: { enqueueCheckin: jest.Mock } = { enqueueCheckin: jest.fn() },
+) {
   const prisma = {
     ticket: prismaMock,
   } as unknown as PrismaService;
@@ -52,6 +57,7 @@ function makeService(prismaMock: Partial<PrismaService['ticket']>) {
     {} as unknown as CryptoCheckoutService,
     {} as unknown as WalletsService,
     config,
+    checkinQueue as unknown as CheckinQueueService,
   );
 }
 
@@ -271,5 +277,139 @@ describe('TicketsService.verifyTicket', () => {
     const svc = svcWith(verifyRow(), update);
     await svc.verifyTicket('HOSTIT_TKT_A3F2B9C1', body, organizer);
     expect(update).not.toHaveBeenCalled();
+  });
+});
+
+describe('TicketsService.checkIn', () => {
+  const EVENT_ID = 'event-1';
+  const ORGANIZER_ID = 'organizer-1';
+  const HOUR = 60 * 60 * 1000;
+  const organizer = { id: ORGANIZER_ID, role: UserRole.ORGANIZER };
+  const body: CheckInTicketDto = { eventId: EVENT_ID };
+
+  /** A row shaped like checkIn's include. Event window straddles now. */
+  function checkinRow(overrides: Record<string, unknown> = {}) {
+    const now = Date.now();
+    return {
+      id: 'ticket-1',
+      reference: 'HOSTIT_TKT_A3F2B9C1',
+      status: TicketStatus.CONFIRMED,
+      buyerName: 'Jane Doe',
+      eventId: EVENT_ID,
+      ticketType: { name: 'VIP' },
+      event: {
+        id: EVENT_ID,
+        organizerId: ORGANIZER_ID,
+        startTime: new Date(now - HOUR),
+        endTime: new Date(now + HOUR),
+      },
+      ...overrides,
+    };
+  }
+
+  function build(row: unknown, opts: { updateCount?: number } = {}) {
+    const findUnique = jest.fn().mockResolvedValue(row);
+    const updateMany = jest
+      .fn()
+      .mockResolvedValue({ count: opts.updateCount ?? 1 });
+    const enqueueCheckin = jest.fn().mockResolvedValue(undefined);
+    const svc = makeService({ findUnique, updateMany }, { enqueueCheckin });
+    return { svc, findUnique, updateMany, enqueueCheckin };
+  }
+
+  it('flips CONFIRMED → USED, enqueues the on-chain check-in, returns success', async () => {
+    const { svc, updateMany, enqueueCheckin } = build(checkinRow());
+
+    const res = await svc.checkIn('HOSTIT_TKT_A3F2B9C1', body, organizer);
+
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'ticket-1', status: TicketStatus.CONFIRMED },
+        data: expect.objectContaining({ status: TicketStatus.USED }),
+      }),
+    );
+    expect(enqueueCheckin).toHaveBeenCalledWith(
+      'ticket-1',
+      EVENT_ID,
+      expect.objectContaining({ scannedBy: ORGANIZER_ID }),
+    );
+    expect(res).toMatchObject({
+      status: TicketStatus.USED,
+      ticketType: 'VIP',
+      buyerName: 'Jane Doe',
+      message: 'Check-in successful. On-chain recording in progress.',
+    });
+    expect(res.checkedInAt).toBeInstanceOf(Date);
+  });
+
+  it('404 when the reference is unknown', async () => {
+    const { svc } = build(null);
+    await expect(svc.checkIn('nope', body, organizer)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
+  it('403 when caller is neither admin nor the event organizer', async () => {
+    const { svc, enqueueCheckin } = build(checkinRow());
+    await expect(
+      svc.checkIn('ref', body, {
+        id: 'someone-else',
+        role: UserRole.ORGANIZER,
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(enqueueCheckin).not.toHaveBeenCalled();
+  });
+
+  it('400 when the ticket belongs to a different event', async () => {
+    const { svc } = build(checkinRow({ eventId: 'other-event' }));
+    await expect(svc.checkIn('ref', body, organizer)).rejects.toThrow(
+      'Ticket is not valid for this event.',
+    );
+  });
+
+  it.each([
+    [TicketStatus.USED, 'Ticket has already been used.'],
+    [TicketStatus.PENDING, 'Ticket payment is pending.'],
+    [TicketStatus.CANCELLED, 'Ticket has been cancelled.'],
+    [TicketStatus.REFUNDED, 'Ticket has been refunded.'],
+  ])('400 for non-CONFIRMED status %s', async (status, message) => {
+    const { svc, enqueueCheckin } = build(checkinRow({ status }));
+    await expect(svc.checkIn('ref', body, organizer)).rejects.toThrow(message);
+    expect(enqueueCheckin).not.toHaveBeenCalled();
+  });
+
+  it('400 when outside the check-in window', async () => {
+    const now = Date.now();
+    const { svc } = build(
+      checkinRow({
+        event: {
+          id: EVENT_ID,
+          organizerId: ORGANIZER_ID,
+          startTime: new Date(now + HOUR),
+          endTime: new Date(now + 2 * HOUR),
+        },
+      }),
+    );
+    await expect(svc.checkIn('ref', body, organizer)).rejects.toThrow(
+      'Event is not within the check-in window.',
+    );
+  });
+
+  it('400 (already used) when the atomic flip updates 0 rows (race/replay)', async () => {
+    const { svc, enqueueCheckin } = build(checkinRow(), { updateCount: 0 });
+    await expect(svc.checkIn('ref', body, organizer)).rejects.toThrow(
+      'Ticket has already been used.',
+    );
+    expect(enqueueCheckin).not.toHaveBeenCalled();
+  });
+
+  it('allows an admin who does not own the event', async () => {
+    const { svc, enqueueCheckin } = build(checkinRow());
+    const res = await svc.checkIn('ref', body, {
+      id: 'admin-9',
+      role: UserRole.ADMIN,
+    });
+    expect(res.status).toBe(TicketStatus.USED);
+    expect(enqueueCheckin).toHaveBeenCalled();
   });
 });

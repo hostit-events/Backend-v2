@@ -19,6 +19,7 @@ import { TicketsService } from './tickets.service';
 import { PurchaseTicketDto } from './dto/purchase-ticket.dto';
 import { QueryMyTicketsDto } from './dto/query-my-tickets.dto';
 import { VerifyTicketDto } from './dto/verify-ticket.dto';
+import { CheckInTicketDto } from './dto/checkin-ticket.dto';
 
 @ApiTags('Tickets')
 @Controller('tickets')
@@ -71,5 +72,21 @@ export class TicketsController {
     @CurrentUser() actor: { id: string; role: UserRole },
   ) {
     return this.tickets.verifyTicket(reference, dto, actor);
+  }
+
+  // Mutating door action: marks the ticket USED and queues the on-chain
+  // checkIn. ORGANIZER/ADMIN only; the service pins it to the event owner
+  // and returns immediately without waiting for the chain.
+  @Post(':reference/checkin')
+  @Roles(UserRole.ORGANIZER, UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Check in a ticket (mark USED + queue on-chain)' })
+  checkIn(
+    @Param('reference') reference: string,
+    @Body() dto: CheckInTicketDto,
+    @CurrentUser() actor: { id: string; role: UserRole },
+  ) {
+    return this.tickets.checkIn(reference, dto, actor);
   }
 }

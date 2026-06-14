@@ -2,9 +2,11 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
+  forwardRef,
 } from '@nestjs/common';
 import {
   EventStatus,
@@ -21,9 +23,11 @@ import { PaymentsService } from '../payments/payments.service';
 import { CryptoCheckoutService } from '../payments/crypto-checkout.service';
 import { WalletsService } from '../wallets/wallets.service';
 import { ConfigService } from '@nestjs/config';
+import { CheckinQueueService } from '../blockchain/checkin-queue.service';
 import { PurchaseTicketDto } from './dto/purchase-ticket.dto';
 import { QueryMyTicketsDto } from './dto/query-my-tickets.dto';
 import { VerifyTicketDto } from './dto/verify-ticket.dto';
+import { CheckInTicketDto } from './dto/checkin-ticket.dto';
 import { DEFAULT_FEE_BEARER, PLATFORM_FEE_RATE } from '../payments/constants';
 import type { PaymentSplit } from '../payments/interfaces/payment-provider.interface';
 import {
@@ -62,6 +66,22 @@ type TicketWithDetail = Prisma.TicketGetPayload<{
   include: typeof TICKET_DETAIL_INCLUDE;
 }>;
 
+/** Human message for why a non-CONFIRMED ticket can't be checked in. */
+function checkInRejectionMessage(status: TicketStatus): string {
+  switch (status) {
+    case TicketStatus.USED:
+      return 'Ticket has already been used.';
+    case TicketStatus.PENDING:
+      return 'Ticket payment is pending.';
+    case TicketStatus.CANCELLED:
+      return 'Ticket has been cancelled.';
+    case TicketStatus.REFUNDED:
+      return 'Ticket has been refunded.';
+    default:
+      return 'Ticket is not valid for check-in.';
+  }
+}
+
 @Injectable()
 export class TicketsService {
   private readonly logger = new Logger(TicketsService.name);
@@ -73,6 +93,10 @@ export class TicketsService {
     private readonly cryptoCheckout: CryptoCheckoutService,
     private readonly wallets: WalletsService,
     configService: ConfigService,
+    // forwardRef: BlockchainModule imports TicketsModule (for QrCodeService),
+    // so the back-reference for the check-in queue is circular.
+    @Inject(forwardRef(() => CheckinQueueService))
+    private readonly checkinQueue: CheckinQueueService,
   ) {
     // Where the gateway redirects after checkout. For local dev this
     // is fine as a relative-ish URL; staging/prod override via env.
@@ -218,6 +242,94 @@ export class TicketsService {
       default:
         return invalid('Ticket is not valid for entry.');
     }
+  }
+
+  /**
+   * Door check-in. Validates ownership + window + status, atomically
+   * flips the ticket to USED (offline-first — the source of truth for
+   * entry), and queues the on-chain checkIn record (#36). Returns
+   * immediately without waiting for the chain.
+   *
+   * Throws (400/403/404) on any invalid case — unlike verifyTicket,
+   * which is a non-mutating preview that returns valid:false.
+   */
+  async checkIn(
+    reference: string,
+    dto: CheckInTicketDto,
+    actor: { id: string; role: UserRole },
+  ) {
+    const ticket = await this.prisma.ticket.findUnique({
+      where: { reference },
+      include: {
+        ticketType: { select: { name: true } },
+        event: {
+          select: {
+            id: true,
+            organizerId: true,
+            startTime: true,
+            endTime: true,
+          },
+        },
+      },
+    });
+    if (!ticket) {
+      throw new NotFoundException('Ticket not found');
+    }
+
+    // Authorization: platform admins, or the organizer who owns the event.
+    const isAdmin = actor.role === UserRole.ADMIN;
+    if (!isAdmin && ticket.event.organizerId !== actor.id) {
+      throw new ForbiddenException(
+        'You are not allowed to check in tickets for this event',
+      );
+    }
+
+    if (ticket.eventId !== dto.eventId) {
+      throw new BadRequestException('Ticket is not valid for this event.');
+    }
+
+    if (ticket.status !== TicketStatus.CONFIRMED) {
+      throw new BadRequestException(checkInRejectionMessage(ticket.status));
+    }
+
+    const now = new Date();
+    if (now < ticket.event.startTime || now > ticket.event.endTime) {
+      throw new BadRequestException('Event is not within the check-in window.');
+    }
+
+    // Atomic, race-safe flip: only the request that transitions the row
+    // out of CONFIRMED wins. A concurrent (or replayed) second check-in
+    // updates 0 rows and is rejected as already used — this is the
+    // idempotency guard, not just the status read above.
+    const checkedInAt = new Date();
+    const { count } = await this.prisma.ticket.updateMany({
+      where: { id: ticket.id, status: TicketStatus.CONFIRMED },
+      data: { status: TicketStatus.USED, checkedInAt },
+    });
+    if (count === 0) {
+      throw new BadRequestException('Ticket has already been used.');
+    }
+
+    // Record the check-in on-chain (creates the CHECKIN
+    // BlockchainTransaction + enqueues the job). Async — we don't block
+    // the door on chain confirmation.
+    await this.checkinQueue.enqueueCheckin(ticket.id, ticket.event.id, {
+      scannedBy: actor.id,
+      scannedAt: checkedInAt.toISOString(),
+    });
+
+    this.logger.log(
+      `Ticket ${ticket.reference} checked in by ${actor.id} (event=${ticket.event.id})`,
+    );
+
+    return {
+      reference: ticket.reference,
+      status: TicketStatus.USED,
+      buyerName: ticket.buyerName,
+      ticketType: ticket.ticketType.name,
+      checkedInAt,
+      message: 'Check-in successful. On-chain recording in progress.',
+    };
   }
 
   /**
