@@ -1,4 +1,4 @@
-import { NestFactory } from '@nestjs/core';
+import { NestFactory, Reflector } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
@@ -11,10 +11,9 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
 // columns like TicketType.onChainTicketId (on-chain uint64), and the
 // default serializer throws "Do not know how to serialize a BigInt".
 // Emit as a string to avoid precision loss beyond Number.MAX_SAFE_INTEGER.
-(BigInt.prototype as unknown as { toJSON: () => string }).toJSON =
-  function () {
-    return this.toString();
-  };
+(BigInt.prototype as unknown as { toJSON: () => string }).toJSON = function () {
+  return this.toString();
+};
 
 async function bootstrap() {
   // rawBody enables Paystack/Monnify webhook signature verification
@@ -78,7 +77,7 @@ async function bootstrap() {
   app.useGlobalFilters(new HttpExceptionFilter());
   app.useGlobalInterceptors(
     new LoggingInterceptor(),
-    new TransformInterceptor(),
+    new TransformInterceptor(app.get(Reflector)),
   );
 
   // Swagger

@@ -1,10 +1,24 @@
-import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Post,
+  Query,
+  Res,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
+import type { Response } from 'express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
+import { SkipTransform } from '../common/decorators/skip-transform.decorator';
 import { EnableMonnifyDto } from './dto/enable-monnify.dto';
 import { EnablePaystackDto } from './dto/enable-paystack.dto';
+import { QueryOrganizerEventsDto } from './dto/query-organizer-events.dto';
+import { QueryAttendeesDto } from './dto/query-attendees.dto';
 import { OrganizerService } from './organizer.service';
 
 /**
@@ -20,6 +34,61 @@ import { OrganizerService } from './organizer.service';
 @Controller('organizer')
 export class OrganizerController {
   constructor(private readonly organizer: OrganizerService) {}
+
+  @Get('events')
+  @Roles(UserRole.ORGANIZER)
+  @ApiOperation({
+    summary: 'My events with sales stats (organizer dashboard landing)',
+  })
+  getMyEvents(
+    @CurrentUser('id') userId: string,
+    @Query() query: QueryOrganizerEventsDto,
+  ) {
+    return this.organizer.getMyEvents(userId, query);
+  }
+
+  @Get('events/:id/analytics')
+  @Roles(UserRole.ORGANIZER, UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Event analytics (daily sales, breakdowns, check-in rate)',
+  })
+  getEventAnalytics(
+    @Param('id') id: string,
+    @CurrentUser() actor: { id: string; role: UserRole },
+  ) {
+    return this.organizer.getEventAnalytics(id, actor);
+  }
+
+  @Get('events/:id/attendees')
+  @Roles(UserRole.ORGANIZER, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Attendee list for an event (filterable)' })
+  getAttendees(
+    @Param('id') id: string,
+    @Query() query: QueryAttendeesDto,
+    @CurrentUser() actor: { id: string; role: UserRole },
+  ) {
+    return this.organizer.getAttendees(id, query, actor);
+  }
+
+  @Get('events/:id/attendees/export')
+  @Roles(UserRole.ORGANIZER, UserRole.ADMIN)
+  @SkipTransform()
+  @ApiOperation({ summary: 'Export attendees as a CSV download' })
+  async exportAttendees(
+    @Param('id') id: string,
+    @CurrentUser() actor: { id: string; role: UserRole },
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<string> {
+    const { filename, csv } = await this.organizer.exportAttendeesCSV(
+      id,
+      actor,
+    );
+    res.set({
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    });
+    return csv;
+  }
 
   @Post('providers/paystack/enable')
   @Roles(UserRole.ORGANIZER)
