@@ -177,6 +177,48 @@ describe('CircleWebhookProcessor — contract executions', () => {
     expect(m.finalize).not.toHaveBeenCalled();
     expect(m.updateWebhook).toHaveBeenCalled();
   });
+
+  it('reconciles a confirmed CHECKIN without finalizing (audit record)', async () => {
+    const m = setup({
+      event: {
+        type: 'transactions.outbound',
+        payload: outboundPayload('CONFIRMED'),
+      },
+      bt: { type: BlockchainTxType.CHECKIN, ticketId: 't-1' },
+    });
+
+    await m.processor.process(job());
+
+    expect(m.reconcile).toHaveBeenCalledWith(
+      'tx-1',
+      expect.objectContaining({ state: 'CONFIRMED' }),
+    );
+    // checkIn confirmation is just an audit record — no mint finalizer.
+    expect(m.finalize).not.toHaveBeenCalled();
+    expect(m.updateWebhook).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ processedAt: expect.any(Date) }),
+      }),
+    );
+  });
+
+  it('reconciles a FAILED CHECKIN as a conflict (no throw, marked processed)', async () => {
+    const m = setup({
+      event: {
+        type: 'transactions.outbound',
+        payload: outboundPayload('FAILED'),
+      },
+      bt: { type: BlockchainTxType.CHECKIN, ticketId: 't-1' },
+    });
+
+    await expect(m.processor.process(job())).resolves.toBeUndefined();
+    expect(m.reconcile).toHaveBeenCalledWith(
+      'tx-1',
+      expect.objectContaining({ state: 'FAILED' }),
+    );
+    expect(m.finalize).not.toHaveBeenCalled();
+    expect(m.updateWebhook).toHaveBeenCalled();
+  });
 });
 
 describe('CircleWebhookProcessor — inbound crypto deposits', () => {

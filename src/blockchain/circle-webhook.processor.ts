@@ -265,6 +265,13 @@ export class CircleWebhookProcessor extends WorkerHost {
           );
         }
         await this.finalizer.finalize(bt.ticketId, tx.txHash);
+      } else if (bt.type === BlockchainTxType.CHECKIN) {
+        // The door already flipped the ticket to USED (#24); the
+        // confirmed CHECKIN tx is the on-chain audit record, now
+        // reconciled onto the BlockchainTransaction row above.
+        this.logger.log(
+          `Circle webhook: on-chain check-in recorded (ticket=${bt.ticketId ?? 'n/a'}, tx=${circleTxId})`,
+        );
       } else {
         this.logger.log(
           `Circle webhook: confirmed ${bt.type} tx ${circleTxId} (no finalizer for this type yet)`,
@@ -273,9 +280,19 @@ export class CircleWebhookProcessor extends WorkerHost {
     } else if (FAILED_STATES.has(state)) {
       // reconcile() already marked the row FAILED; this is the
       // dead-letter / alerting hook.
-      this.logger.error(
-        `Circle webhook: ${bt.type} tx ${circleTxId} FAILED (state=${state}, reason=${tx.errorReason ?? 'n/a'})`,
-      );
+      if (bt.type === BlockchainTxType.CHECKIN) {
+        // A reverted check-in is most likely a duplicate (already
+        // checked in on-chain). Surface it for auditor review — no
+        // retry, the off-chain USED state is unaffected.
+        this.logger.error(
+          `CheckInConflict: on-chain checkIn FAILED (ticket=${bt.ticketId ?? 'n/a'}, tx=${circleTxId}, ` +
+            `reason=${tx.errorReason ?? 'n/a'}) — auditor review`,
+        );
+      } else {
+        this.logger.error(
+          `Circle webhook: ${bt.type} tx ${circleTxId} FAILED (state=${state}, reason=${tx.errorReason ?? 'n/a'})`,
+        );
+      }
     } else {
       this.logger.log(
         `Circle webhook: ${bt.type} tx ${circleTxId} non-terminal state=${state}`,
