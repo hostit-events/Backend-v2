@@ -7,12 +7,19 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { UserRole } from '@prisma/client';
+import { EventStatus, Prisma, TicketStatus, UserRole } from '@prisma/client';
 import { MonnifyProvider } from '../payments/providers/monnify.provider';
 import { PaystackService } from '../paystack/paystack.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { EnableMonnifyDto } from './dto/enable-monnify.dto';
 import { EnablePaystackDto } from './dto/enable-paystack.dto';
+import { QueryOrganizerEventsDto } from './dto/query-organizer-events.dto';
+
+/** Ticket statuses that count as a completed sale. */
+const SOLD_STATUSES: TicketStatus[] = [
+  TicketStatus.CONFIRMED,
+  TicketStatus.USED,
+];
 
 /**
  * Per-provider fiat enablement for organizers.
@@ -37,6 +44,149 @@ export class OrganizerService {
     private readonly paystack: PaystackService,
     private readonly monnify: MonnifyProvider,
   ) {}
+
+  /**
+   * Organizer dashboard landing: the caller's events with per-event and
+   * per-ticket-type sales stats, plus a top-level summary computed across
+   * ALL their events (not just the current page).
+   *
+   * Stats are derived with grouped aggregations (groupBy + _count) rather
+   * than loading ticket rows. "Sold" = CONFIRMED or USED; "checkedIn" =
+   * USED. Revenue is sold count x current ticket-type price.
+   */
+  async getMyEvents(userId: string, query: QueryOrganizerEventsDto) {
+    // ---- summary across ALL the organizer's events ----
+    const [totalEvents, publishedEvents, soldGroupsAll, typePrices] =
+      await Promise.all([
+        this.prisma.event.count({ where: { organizerId: userId } }),
+        this.prisma.event.count({
+          where: { organizerId: userId, status: EventStatus.PUBLISHED },
+        }),
+        this.prisma.ticket.groupBy({
+          by: ['ticketTypeId'],
+          where: {
+            event: { organizerId: userId },
+            status: { in: SOLD_STATUSES },
+          },
+          _count: { _all: true },
+        }),
+        this.prisma.ticketType.findMany({
+          where: { event: { organizerId: userId } },
+          select: { id: true, price: true },
+        }),
+      ]);
+
+    const priceById = new Map(
+      typePrices.map((t) => [t.id, Number(t.price)] as const),
+    );
+    let totalTicketsSold = 0;
+    let totalRevenue = 0;
+    for (const g of soldGroupsAll) {
+      const sold = g._count._all;
+      totalTicketsSold += sold;
+      totalRevenue += sold * (priceById.get(g.ticketTypeId) ?? 0);
+    }
+
+    // ---- paginated events list (status-filtered) ----
+    const where: Prisma.EventWhereInput = { organizerId: userId };
+    if (query.status) {
+      where.status = query.status;
+    }
+
+    const [events, total] = await Promise.all([
+      this.prisma.event.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: query.skip,
+        take: query.limit,
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          coverImage: true,
+          startTime: true,
+          endTime: true,
+          status: true,
+          category: true,
+          createdAt: true,
+          ticketTypes: {
+            select: { id: true, name: true, price: true, quantity: true },
+          },
+        },
+      }),
+      this.prisma.event.count({ where }),
+    ]);
+
+    // One grouped read for every ticket on the page, split by type + status.
+    const pageEventIds = events.map((e) => e.id);
+    const ticketGroups = pageEventIds.length
+      ? await this.prisma.ticket.groupBy({
+          by: ['ticketTypeId', 'status'],
+          where: { eventId: { in: pageEventIds } },
+          _count: { _all: true },
+        })
+      : [];
+
+    const statsByType = new Map<string, { sold: number; checkedIn: number }>();
+    for (const g of ticketGroups) {
+      const entry = statsByType.get(g.ticketTypeId) ?? {
+        sold: 0,
+        checkedIn: 0,
+      };
+      if (SOLD_STATUSES.includes(g.status)) {
+        entry.sold += g._count._all;
+      }
+      if (g.status === TicketStatus.USED) {
+        entry.checkedIn += g._count._all;
+      }
+      statsByType.set(g.ticketTypeId, entry);
+    }
+
+    const eventsWithStats = events.map((event) => {
+      let totalTickets = 0;
+      let ticketsSold = 0;
+      let revenue = 0;
+      let checkedIn = 0;
+      const ticketTypes = event.ticketTypes.map((tt) => {
+        const s = statsByType.get(tt.id) ?? { sold: 0, checkedIn: 0 };
+        const typeRevenue = s.sold * Number(tt.price);
+        totalTickets += tt.quantity;
+        ticketsSold += s.sold;
+        revenue += typeRevenue;
+        checkedIn += s.checkedIn;
+        return {
+          name: tt.name,
+          sold: s.sold,
+          total: tt.quantity,
+          revenue: typeRevenue,
+        };
+      });
+
+      const { ticketTypes: _types, ...rest } = event;
+      return {
+        ...rest,
+        stats: {
+          totalTickets,
+          ticketsSold,
+          ticketsAvailable: totalTickets - ticketsSold,
+          totalRevenue: revenue,
+          checkedIn,
+          ticketTypes,
+        },
+      };
+    });
+
+    return {
+      summary: { totalEvents, publishedEvents, totalRevenue, totalTicketsSold },
+      events: eventsWithStats,
+      pagination: {
+        page: query.page,
+        limit: query.limit,
+        total,
+        totalPages: Math.ceil(total / query.limit),
+      },
+    };
+  }
 
   async enablePaystack(userId: string, dto: EnablePaystackDto) {
     const { profile, user } = await this.loadOrganizer(userId);

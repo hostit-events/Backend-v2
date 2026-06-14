@@ -1,10 +1,19 @@
-import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Post,
+  Query,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { EnableMonnifyDto } from './dto/enable-monnify.dto';
 import { EnablePaystackDto } from './dto/enable-paystack.dto';
+import { QueryOrganizerEventsDto } from './dto/query-organizer-events.dto';
 import { OrganizerService } from './organizer.service';
 
 /**
@@ -20,6 +29,18 @@ import { OrganizerService } from './organizer.service';
 @Controller('organizer')
 export class OrganizerController {
   constructor(private readonly organizer: OrganizerService) {}
+
+  @Get('events')
+  @Roles(UserRole.ORGANIZER)
+  @ApiOperation({
+    summary: 'My events with sales stats (organizer dashboard landing)',
+  })
+  getMyEvents(
+    @CurrentUser('id') userId: string,
+    @Query() query: QueryOrganizerEventsDto,
+  ) {
+    return this.organizer.getMyEvents(userId, query);
+  }
 
   @Post('providers/paystack/enable')
   @Roles(UserRole.ORGANIZER)
