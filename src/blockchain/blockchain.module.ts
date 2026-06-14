@@ -7,12 +7,17 @@ import { TicketsModule } from '../tickets/tickets.module';
 import { BlockchainHealthIndicator } from './blockchain-health.indicator';
 import { BlockchainReadService } from './blockchain-read.service';
 import { CircleContractService } from './circle-contract.service';
+import {
+  CheckinQueueService,
+  TICKET_CHECKIN_QUEUE,
+} from './checkin-queue.service';
 import { CircleWebhookProcessor } from './circle-webhook.processor';
 import { CIRCLE_WEBHOOK_QUEUE } from './circle-webhook.queue';
 import { EventPublishProcessor } from './event-publish.processor';
 import { MintFinalizerService } from './mint-finalizer.service';
 import { MintQueueService, TICKET_MINT_QUEUE } from './mint-queue.service';
 import { MintTicketProcessor } from './mint-ticket.processor';
+import { TicketCheckinProcessor } from './ticket-checkin.processor';
 
 /**
  * Phase 6 surface area:
@@ -42,6 +47,7 @@ import { MintTicketProcessor } from './mint-ticket.processor';
     // registerQueue as idempotent so both modules can share cleanly.
     BullModule.registerQueue({ name: 'event-publish' }),
     BullModule.registerQueue({ name: TICKET_MINT_QUEUE }),
+    BullModule.registerQueue({ name: TICKET_CHECKIN_QUEUE }),
     // Consumer side of the Circle webhook queue. The WebhooksModule
     // registers the producer side; registerQueue is idempotent.
     BullModule.registerQueue({ name: CIRCLE_WEBHOOK_QUEUE }),
@@ -54,6 +60,8 @@ import { MintTicketProcessor } from './mint-ticket.processor';
     MintFinalizerService,
     MintQueueService,
     MintTicketProcessor,
+    CheckinQueueService,
+    TicketCheckinProcessor,
     CircleWebhookProcessor,
   ],
   exports: [
@@ -62,6 +70,7 @@ import { MintTicketProcessor } from './mint-ticket.processor';
     CircleContractService,
     MintFinalizerService,
     MintQueueService,
+    CheckinQueueService,
   ],
 })
 export class BlockchainModule {}
