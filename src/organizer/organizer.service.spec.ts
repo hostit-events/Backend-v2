@@ -6,6 +6,7 @@ import { PaystackService } from '../paystack/paystack.service';
 import { MonnifyProvider } from '../payments/providers/monnify.provider';
 import { OrganizerService } from './organizer.service';
 import { QueryOrganizerEventsDto } from './dto/query-organizer-events.dto';
+import { UpdateBankDetailsDto } from './dto/update-bank-details.dto';
 
 /**
  * getMyEvents leans on prisma aggregations. We stub each call the method
@@ -569,5 +570,133 @@ describe('OrganizerService.getAttendees / exportAttendeesCSV', () => {
     expect(row).toBe(
       'HOSTIT_TKT_A3F2B9C1,"Doe, Jane ""JD""",jane@example.com,,VIP,USED,2026-05-15T09:30:00.000Z,2026-04-05T10:00:00.000Z',
     );
+  });
+});
+
+describe('OrganizerService.updateBankDetails', () => {
+  const dto: UpdateBankDetailsDto = {
+    bankCode: '058',
+    accountNumber: '0123456789',
+  };
+
+  function bankSvc(opts: {
+    user?: unknown;
+    processingPayout?: { id: string } | null;
+    resolve?: { accountNumber: string; accountName: string };
+    bankName?: string | null;
+  }) {
+    const userFindUnique = jest.fn().mockResolvedValue(
+      opts.user === undefined
+        ? {
+            id: 'u-1',
+            role: UserRole.ORGANIZER,
+            firstName: 'John',
+            lastName: 'Doe',
+            organizerProfile: { id: 'prof-1', bankName: 'Old Bank' },
+          }
+        : opts.user,
+    );
+    const payoutFindFirst = jest
+      .fn()
+      .mockResolvedValue(opts.processingPayout ?? null);
+    const profileUpdate = jest.fn().mockImplementation(({ data }) =>
+      Promise.resolve({
+        id: 'prof-1',
+        bankName: data.bankName,
+        bankCode: data.bankCode,
+        accountNumber: data.accountNumber,
+        accountName: data.accountName,
+        bankVerified: data.bankVerified,
+        updatedAt: new Date('2026-03-12T15:00:00Z'),
+      }),
+    );
+
+    const resolveBankAccount = jest.fn().mockResolvedValue(
+      opts.resolve ?? {
+        accountNumber: '0123456789',
+        accountName: 'JOHN DOE',
+      },
+    );
+    const getBankName = jest
+      .fn()
+      .mockResolvedValue(
+        opts.bankName === undefined ? 'Guaranty Trust Bank' : opts.bankName,
+      );
+
+    const prisma = {
+      user: { findUnique: userFindUnique },
+      payout: { findFirst: payoutFindFirst },
+      organizerProfile: { update: profileUpdate },
+    } as unknown as PrismaService;
+    const paystack = {
+      resolveBankAccount,
+      getBankName,
+    } as unknown as PaystackService;
+    const config = { get: () => undefined } as unknown as ConfigService;
+
+    const svc = new OrganizerService(
+      prisma,
+      config,
+      paystack,
+      {} as unknown as MonnifyProvider,
+    );
+    return { svc, resolveBankAccount, getBankName, profileUpdate };
+  }
+
+  it('verifies via Paystack, resolves bank name, persists, returns masked', async () => {
+    const { svc, resolveBankAccount, profileUpdate } = bankSvc({});
+
+    const res = await svc.updateBankDetails('u-1', dto);
+
+    expect(resolveBankAccount).toHaveBeenCalledWith('0123456789', '058');
+    expect(profileUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'prof-1' },
+        data: expect.objectContaining({
+          bankCode: '058',
+          accountName: 'JOHN DOE',
+          bankVerified: true,
+        }),
+      }),
+    );
+    expect(res).toEqual({
+      bankName: 'Guaranty Trust Bank',
+      bankCode: '058',
+      accountNumber: '012****789', // masked
+      accountName: 'JOHN DOE', // from Paystack, not the client
+      bankVerified: true,
+      updatedAt: new Date('2026-03-12T15:00:00Z'),
+    });
+  });
+
+  it('rejects with 400 while a payout is PROCESSING (no verify call)', async () => {
+    const { svc, resolveBankAccount } = bankSvc({
+      processingPayout: { id: 'p-1' },
+    });
+    await expect(svc.updateBankDetails('u-1', dto)).rejects.toThrow(
+      'Cannot update bank details while a payout is processing',
+    );
+    expect(resolveBankAccount).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-organizer with 403', async () => {
+    const { svc } = bankSvc({
+      user: {
+        id: 'u-1',
+        role: UserRole.BUYER,
+        firstName: 'J',
+        lastName: 'D',
+        organizerProfile: null,
+      },
+    });
+    await expect(svc.updateBankDetails('u-1', dto)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+  });
+
+  it('falls back to the existing bank name when the lookup returns null', async () => {
+    const { svc } = bankSvc({ bankName: null });
+    const res = await svc.updateBankDetails('u-1', dto);
+    expect(res.bankName).toBe('Old Bank');
   });
 });

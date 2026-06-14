@@ -12,9 +12,37 @@ export class PaystackService {
   private readonly secretKey: string;
   private readonly baseUrl = 'https://api.paystack.co';
 
+  /** Lazy code→name cache for the (effectively static) NG bank list. */
+  private bankNamesByCode: Map<string, string> | null = null;
+
   constructor(private readonly configService: ConfigService) {
     this.secretKey =
       this.configService.getOrThrow<string>('paystack.secretKey');
+  }
+
+  /**
+   * Resolve a bank code to its display name via Paystack's bank list.
+   * Best-effort: returns null if the list can't be fetched or the code
+   * isn't found, so callers can still persist the verified account.
+   */
+  async getBankName(bankCode: string): Promise<string | null> {
+    try {
+      if (!this.bankNamesByCode) {
+        const banks =
+          await this.request<Array<{ name: string; code: string }>>(
+            '/bank?currency=NGN',
+          );
+        this.bankNamesByCode = new Map(banks.map((b) => [b.code, b.name]));
+      }
+      return this.bankNamesByCode.get(bankCode) ?? null;
+    } catch (err) {
+      this.logger.warn(
+        `Paystack bank-name lookup failed for code ${bankCode}: ${
+          err instanceof Error ? err.message : 'unknown error'
+        }`,
+      );
+      return null;
+    }
   }
 
   private async request<T>(path: string, options?: RequestInit): Promise<T> {

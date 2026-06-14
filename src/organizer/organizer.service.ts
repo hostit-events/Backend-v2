@@ -9,6 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import {
   EventStatus,
+  PayoutStatus,
   Prisma,
   TicketStatus,
   TransactionStatus,
@@ -21,6 +22,7 @@ import { EnableMonnifyDto } from './dto/enable-monnify.dto';
 import { EnablePaystackDto } from './dto/enable-paystack.dto';
 import { QueryOrganizerEventsDto } from './dto/query-organizer-events.dto';
 import { QueryAttendeesDto } from './dto/query-attendees.dto';
+import { UpdateBankDetailsDto } from './dto/update-bank-details.dto';
 
 /** Ticket statuses that count as a completed sale. */
 const SOLD_STATUSES: TicketStatus[] = [
@@ -36,6 +38,11 @@ function dayKey(d: Date): string {
 /** RFC-4180 CSV field escaping. */
 function csvEscape(value: string): string {
   return /[",\n\r]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
+
+/** Mask a NUBAN as first-3 + **** + last-3 (e.g. 0123456789 → 012****789). */
+function maskAccountNumber(acct: string): string {
+  return acct.length <= 6 ? acct : `${acct.slice(0, 3)}****${acct.slice(-3)}`;
 }
 
 /** Inclusive list of UTC day keys from `from` to `to`. */
@@ -540,6 +547,58 @@ export class OrganizerService {
       throw new ForbiddenException('You do not have access to this event');
     }
     return { id: event.id, slug: event.slug };
+  }
+
+  /**
+   * Update the organizer's settlement bank. Re-verifies the account via
+   * Paystack (account name is taken from the resolve, never the client),
+   * resolves the bank's display name, and persists onto OrganizerProfile.
+   * Blocked while a payout is PROCESSING so funds can't route mid-flight.
+   *
+   * NOTE: under split settlement the live settlement bank lives on the
+   * Paystack/Monnify subaccount; pushing this change to the provider
+   * subaccount is a deliberate follow-up, not handled here.
+   */
+  async updateBankDetails(userId: string, dto: UpdateBankDetailsDto) {
+    const { user, profile } = await this.loadOrganizer(userId);
+
+    const processing = await this.prisma.payout.findFirst({
+      where: { organizerId: userId, status: PayoutStatus.PROCESSING },
+      select: { id: true },
+    });
+    if (processing) {
+      throw new BadRequestException(
+        'Cannot update bank details while a payout is processing',
+      );
+    }
+
+    const bankData = await this.verifyBankAccount(
+      user,
+      dto.accountNumber,
+      dto.bankCode,
+    );
+    const bankName = await this.paystack.getBankName(dto.bankCode);
+
+    const updated = await this.prisma.organizerProfile.update({
+      where: { id: profile.id },
+      data: {
+        bankCode: dto.bankCode,
+        accountNumber: bankData.accountNumber,
+        accountName: bankData.accountName,
+        bankName: bankName ?? profile.bankName,
+        bankVerified: true,
+      },
+    });
+
+    this.logger.log(`Bank details updated for user ${userId}`);
+    return {
+      bankName: updated.bankName,
+      bankCode: updated.bankCode,
+      accountNumber: maskAccountNumber(bankData.accountNumber),
+      accountName: bankData.accountName,
+      bankVerified: updated.bankVerified,
+      updatedAt: updated.updatedAt,
+    };
   }
 
   async enablePaystack(userId: string, dto: EnablePaystackDto) {
