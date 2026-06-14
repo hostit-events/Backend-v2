@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Param,
   Post,
+  Put,
   Query,
   Res,
 } from '@nestjs/common';
@@ -19,6 +20,7 @@ import { EnableMonnifyDto } from './dto/enable-monnify.dto';
 import { EnablePaystackDto } from './dto/enable-paystack.dto';
 import { QueryOrganizerEventsDto } from './dto/query-organizer-events.dto';
 import { QueryAttendeesDto } from './dto/query-attendees.dto';
+import { UpdateBankDetailsDto } from './dto/update-bank-details.dto';
 import { OrganizerService } from './organizer.service';
 
 /**
@@ -88,6 +90,19 @@ export class OrganizerController {
       'Content-Disposition': `attachment; filename="${filename}"`,
     });
     return csv;
+  }
+
+  @Put('bank-details')
+  @Roles(UserRole.ORGANIZER)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Update settlement bank details (Paystack-verified)',
+  })
+  updateBankDetails(
+    @CurrentUser('id') userId: string,
+    @Body() dto: UpdateBankDetailsDto,
+  ) {
+    return this.organizer.updateBankDetails(userId, dto);
   }
 
   @Post('providers/paystack/enable')
