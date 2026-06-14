@@ -7,14 +7,18 @@ import {
   Param,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
+import type { Response } from 'express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
+import { SkipTransform } from '../common/decorators/skip-transform.decorator';
 import { EnableMonnifyDto } from './dto/enable-monnify.dto';
 import { EnablePaystackDto } from './dto/enable-paystack.dto';
 import { QueryOrganizerEventsDto } from './dto/query-organizer-events.dto';
+import { QueryAttendeesDto } from './dto/query-attendees.dto';
 import { OrganizerService } from './organizer.service';
 
 /**
@@ -53,6 +57,37 @@ export class OrganizerController {
     @CurrentUser() actor: { id: string; role: UserRole },
   ) {
     return this.organizer.getEventAnalytics(id, actor);
+  }
+
+  @Get('events/:id/attendees')
+  @Roles(UserRole.ORGANIZER, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Attendee list for an event (filterable)' })
+  getAttendees(
+    @Param('id') id: string,
+    @Query() query: QueryAttendeesDto,
+    @CurrentUser() actor: { id: string; role: UserRole },
+  ) {
+    return this.organizer.getAttendees(id, query, actor);
+  }
+
+  @Get('events/:id/attendees/export')
+  @Roles(UserRole.ORGANIZER, UserRole.ADMIN)
+  @SkipTransform()
+  @ApiOperation({ summary: 'Export attendees as a CSV download' })
+  async exportAttendees(
+    @Param('id') id: string,
+    @CurrentUser() actor: { id: string; role: UserRole },
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<string> {
+    const { filename, csv } = await this.organizer.exportAttendeesCSV(
+      id,
+      actor,
+    );
+    res.set({
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    });
+    return csv;
   }
 
   @Post('providers/paystack/enable')

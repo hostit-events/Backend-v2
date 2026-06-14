@@ -20,6 +20,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EnableMonnifyDto } from './dto/enable-monnify.dto';
 import { EnablePaystackDto } from './dto/enable-paystack.dto';
 import { QueryOrganizerEventsDto } from './dto/query-organizer-events.dto';
+import { QueryAttendeesDto } from './dto/query-attendees.dto';
 
 /** Ticket statuses that count as a completed sale. */
 const SOLD_STATUSES: TicketStatus[] = [
@@ -30,6 +31,11 @@ const SOLD_STATUSES: TicketStatus[] = [
 /** UTC YYYY-MM-DD key for a timestamp. */
 function dayKey(d: Date): string {
   return d.toISOString().slice(0, 10);
+}
+
+/** RFC-4180 CSV field escaping. */
+function csvEscape(value: string): string {
+  return /[",\n\r]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }
 
 /** Inclusive list of UTC day keys from `from` to `to`. */
@@ -375,6 +381,165 @@ export class OrganizerService {
       revenueByProvider,
       revenueByChannel,
     };
+  }
+
+  /**
+   * Paginated attendee roster for an event (owner/admin), with optional
+   * status / ticket-type / name-or-email-search filters. The summary
+   * counts are event-wide (independent of the list filters).
+   */
+  async getAttendees(
+    eventId: string,
+    query: QueryAttendeesDto,
+    actor: { id: string; role: UserRole },
+  ) {
+    await this.assertEventAccess(eventId, actor);
+
+    const where: Prisma.TicketWhereInput = { eventId };
+    if (query.status) {
+      where.status = query.status;
+    }
+    if (query.ticketTypeId) {
+      where.ticketTypeId = query.ticketTypeId;
+    }
+    if (query.search) {
+      where.OR = [
+        { buyerName: { contains: query.search, mode: 'insensitive' } },
+        { buyerEmail: { contains: query.search, mode: 'insensitive' } },
+      ];
+    }
+
+    const [rows, total, statusGroups] = await Promise.all([
+      this.prisma.ticket.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: query.skip,
+        take: query.limit,
+        select: {
+          reference: true,
+          buyerName: true,
+          buyerEmail: true,
+          buyerPhone: true,
+          status: true,
+          checkedInAt: true,
+          createdAt: true,
+          ticketType: { select: { name: true } },
+        },
+      }),
+      this.prisma.ticket.count({ where }),
+      this.prisma.ticket.groupBy({
+        by: ['status'],
+        where: { eventId },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const countByStatus = new Map(
+      statusGroups.map((g) => [g.status, g._count._all] as const),
+    );
+    const totalAttendees = [...countByStatus.values()].reduce(
+      (a, b) => a + b,
+      0,
+    );
+
+    return {
+      attendees: rows.map((r) => ({
+        ticketReference: r.reference,
+        buyerName: r.buyerName,
+        buyerEmail: r.buyerEmail,
+        buyerPhone: r.buyerPhone,
+        ticketType: r.ticketType.name,
+        status: r.status,
+        checkedInAt: r.checkedInAt,
+        purchasedAt: r.createdAt,
+      })),
+      summary: {
+        totalAttendees,
+        confirmed: countByStatus.get(TicketStatus.CONFIRMED) ?? 0,
+        checkedIn: countByStatus.get(TicketStatus.USED) ?? 0,
+        cancelled: countByStatus.get(TicketStatus.CANCELLED) ?? 0,
+      },
+      pagination: {
+        page: query.page,
+        limit: query.limit,
+        total,
+        totalPages: Math.ceil(total / query.limit),
+      },
+    };
+  }
+
+  /**
+   * Full (unpaginated) attendee export as a CSV string, plus a slug-based
+   * filename. Owner/admin only.
+   */
+  async exportAttendeesCSV(
+    eventId: string,
+    actor: { id: string; role: UserRole },
+  ): Promise<{ filename: string; csv: string }> {
+    const event = await this.assertEventAccess(eventId, actor);
+
+    const rows = await this.prisma.ticket.findMany({
+      where: { eventId },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        reference: true,
+        buyerName: true,
+        buyerEmail: true,
+        buyerPhone: true,
+        status: true,
+        checkedInAt: true,
+        createdAt: true,
+        ticketType: { select: { name: true } },
+      },
+    });
+
+    const header = [
+      'Reference',
+      'Name',
+      'Email',
+      'Phone',
+      'Ticket Type',
+      'Status',
+      'Checked In',
+      'Purchased At',
+    ];
+    const lines = [header.join(',')];
+    for (const r of rows) {
+      lines.push(
+        [
+          r.reference,
+          r.buyerName,
+          r.buyerEmail,
+          r.buyerPhone ?? '',
+          r.ticketType.name,
+          r.status,
+          r.checkedInAt ? r.checkedInAt.toISOString() : '',
+          r.createdAt.toISOString(),
+        ]
+          .map(csvEscape)
+          .join(','),
+      );
+    }
+
+    return { filename: `${event.slug}-attendees.csv`, csv: lines.join('\n') };
+  }
+
+  /** Load an event and assert the caller owns it (or is an admin). */
+  private async assertEventAccess(
+    eventId: string,
+    actor: { id: string; role: UserRole },
+  ): Promise<{ id: string; slug: string }> {
+    const event = await this.prisma.event.findUnique({
+      where: { id: eventId },
+      select: { id: true, slug: true, organizerId: true },
+    });
+    if (!event) {
+      throw new NotFoundException('Event not found');
+    }
+    if (actor.role !== UserRole.ADMIN && event.organizerId !== actor.id) {
+      throw new ForbiddenException('You do not have access to this event');
+    }
+    return { id: event.id, slug: event.slug };
   }
 
   async enablePaystack(userId: string, dto: EnablePaystackDto) {

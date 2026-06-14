@@ -417,3 +417,157 @@ describe('OrganizerService.getEventAnalytics', () => {
     expect(res.dailySales).toEqual([]);
   });
 });
+
+describe('OrganizerService.getAttendees / exportAttendeesCSV', () => {
+  const ORG = 'org-1';
+  const owner = { id: ORG, role: UserRole.ORGANIZER };
+
+  function attendeeRow(overrides: Record<string, unknown> = {}) {
+    return {
+      reference: 'HOSTIT_TKT_A3F2B9C1',
+      buyerName: 'Jane Doe',
+      buyerEmail: 'jane@example.com',
+      buyerPhone: '+2348012345678',
+      status: TicketStatus.CONFIRMED,
+      checkedInAt: null,
+      createdAt: new Date('2026-04-05T10:00:00Z'),
+      ticketType: { name: 'VIP' },
+      ...overrides,
+    };
+  }
+
+  function svcWith(opts: {
+    event?: unknown;
+    rows?: unknown[];
+    total?: number;
+    statusGroups?: { status: TicketStatus; _count: { _all: number } }[];
+  }) {
+    const eventFindUnique = jest
+      .fn()
+      .mockResolvedValue(
+        opts.event === undefined
+          ? { id: 'event-1', slug: 'lagos-tech-summit', organizerId: ORG }
+          : opts.event,
+      );
+    const ticketFindMany = jest.fn().mockResolvedValue(opts.rows ?? []);
+    const ticketCount = jest.fn().mockResolvedValue(opts.total ?? 0);
+    const ticketGroupBy = jest.fn().mockResolvedValue(opts.statusGroups ?? []);
+
+    const prisma = {
+      event: { findUnique: eventFindUnique },
+      ticket: {
+        findMany: ticketFindMany,
+        count: ticketCount,
+        groupBy: ticketGroupBy,
+      },
+    } as unknown as PrismaService;
+
+    const svc = new OrganizerService(
+      prisma,
+      { get: () => undefined } as unknown as ConfigService,
+      {} as unknown as PaystackService,
+      {} as unknown as MonnifyProvider,
+    );
+    return { svc, ticketFindMany };
+  }
+
+  function attendeeQuery(overrides = {}) {
+    return { page: 1, limit: 50, skip: 0, ...overrides } as never;
+  }
+
+  it('404 when the event does not exist', async () => {
+    const { svc } = svcWith({ event: null });
+    await expect(
+      svc.getAttendees('nope', attendeeQuery(), owner),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('403 when the caller is not owner/admin', async () => {
+    const { svc } = svcWith({});
+    await expect(
+      svc.getAttendees('event-1', attendeeQuery(), {
+        id: 'intruder',
+        role: UserRole.ORGANIZER,
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('maps rows and computes event-wide summary counts', async () => {
+    const { svc } = svcWith({
+      rows: [attendeeRow()],
+      total: 1,
+      statusGroups: [
+        { status: TicketStatus.CONFIRMED, _count: { _all: 140 } },
+        { status: TicketStatus.USED, _count: { _all: 0 } },
+        { status: TicketStatus.CANCELLED, _count: { _all: 25 } },
+      ],
+    });
+
+    const res = await svc.getAttendees('event-1', attendeeQuery(), owner);
+
+    expect(res.attendees[0]).toEqual({
+      ticketReference: 'HOSTIT_TKT_A3F2B9C1',
+      buyerName: 'Jane Doe',
+      buyerEmail: 'jane@example.com',
+      buyerPhone: '+2348012345678',
+      ticketType: 'VIP',
+      status: TicketStatus.CONFIRMED,
+      checkedInAt: null,
+      purchasedAt: new Date('2026-04-05T10:00:00Z'),
+    });
+    expect(res.summary).toEqual({
+      totalAttendees: 165,
+      confirmed: 140,
+      checkedIn: 0,
+      cancelled: 25,
+    });
+  });
+
+  it('applies status, ticketType, and search filters to the query', async () => {
+    const { svc, ticketFindMany } = svcWith({ rows: [], total: 0 });
+
+    await svc.getAttendees(
+      'event-1',
+      attendeeQuery({
+        status: TicketStatus.USED,
+        ticketTypeId: 'tt-vip',
+        search: 'jane',
+      }),
+      owner,
+    );
+
+    expect(ticketFindMany.mock.calls[0][0].where).toEqual({
+      eventId: 'event-1',
+      status: TicketStatus.USED,
+      ticketTypeId: 'tt-vip',
+      OR: [
+        { buyerName: { contains: 'jane', mode: 'insensitive' } },
+        { buyerEmail: { contains: 'jane', mode: 'insensitive' } },
+      ],
+    });
+  });
+
+  it('exports a CSV with header, slug filename, and RFC-4180 escaping', async () => {
+    const { svc } = svcWith({
+      rows: [
+        attendeeRow({
+          buyerName: 'Doe, Jane "JD"', // comma + quotes → must be quoted/escaped
+          buyerPhone: null, // empty cell
+          checkedInAt: new Date('2026-05-15T09:30:00Z'),
+          status: TicketStatus.USED,
+        }),
+      ],
+    });
+
+    const { filename, csv } = await svc.exportAttendeesCSV('event-1', owner);
+
+    expect(filename).toBe('lagos-tech-summit-attendees.csv');
+    const [header, row] = csv.split('\n');
+    expect(header).toBe(
+      'Reference,Name,Email,Phone,Ticket Type,Status,Checked In,Purchased At',
+    );
+    expect(row).toBe(
+      'HOSTIT_TKT_A3F2B9C1,"Doe, Jane ""JD""",jane@example.com,,VIP,USED,2026-05-15T09:30:00.000Z,2026-04-05T10:00:00.000Z',
+    );
+  });
+});
