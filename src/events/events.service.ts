@@ -514,6 +514,16 @@ export class EventsService {
     // call per type. Build the per-type payloads + pre-create one
     // BlockchainTransaction row per type so the worker can attach the
     // Circle transactionId to the right row when it runs.
+    // On-chain fees are denominated in USDC (6-dp), converted from the
+    // event's NGN price via the flat rate. This is the `ticketFee` the
+    // contract stores; it adds HostIT's 3% on top as `hostItFee`, so the
+    // buyer pays ticketFee + 3% (buyer-bears model). Revisit if we move to
+    // organizer-selected fee tokens / fee-inclusive pricing.
+    const usdcNgnRate =
+      this.configService.getOrThrow<number>('crypto.usdcNgnRate');
+    const toUsdcBaseUnits = (priceNgn: Prisma.Decimal | string): string =>
+      new Prisma.Decimal(priceNgn).div(usdcNgnRate).mul(1_000_000).toFixed(0);
+
     const ticketTypePayloads = event.ticketTypes.map((tt) => ({
       ticketTypeId: tt.id,
       ticketData: {
@@ -528,13 +538,11 @@ export class EventsService {
         symbol: `${eventSymbol}-${tt.name.replace(/\s+/g, '').slice(0, 4).toUpperCase()}`,
         uri: `https://api.hostit.ng/events/${event.slug}/${tt.id}/metadata`,
       },
-      // Placeholder — proper organizer-selected fee types + crypto-
-      // denominated prices land in a follow-up DTO/UI PR. For now every
-      // type defaults to ETH at the (incorrect) fiat-amount-as-wei value.
-      // Safe to ship because the on-chain mint flow isn't user-facing
-      // yet; we'll fix prices before the first real organizer publishes.
-      feeTypes: ['ETH'],
-      prices: [tt.price.toString()],
+      // Crypto checkout settles in USDC via `mintTicket`. Free events
+      // ignore fees on-chain (createTicket skips setTicketFees when
+      // isFree), so the converted value is harmless there.
+      feeTypes: ['USDC'],
+      prices: [toUsdcBaseUnits(tt.price)],
     }));
 
     // Atomic transition + per-type BlockchainTransaction rows

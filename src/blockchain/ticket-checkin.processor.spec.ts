@@ -26,12 +26,20 @@ function setup(
     alreadyConfirmed?: { id: string } | null;
     webhooksEnabled?: boolean;
     poll?: { state: string; txHash?: string; errorReason?: string };
+    scannerWallet?: { circleWalletId: string; address: string } | null;
   } = {},
 ) {
   const findUnique = jest
     .fn()
     .mockResolvedValue(opts.ticket === undefined ? ticketRow() : opts.ticket);
   const findFirst = jest.fn().mockResolvedValue(opts.alreadyConfirmed ?? null);
+  const userWalletFindFirst = jest
+    .fn()
+    .mockResolvedValue(
+      opts.scannerWallet === undefined
+        ? { circleWalletId: 'scw-1', address: '0xscanner' }
+        : opts.scannerWallet,
+    );
   const update = jest.fn().mockResolvedValue({});
   const executeContract = jest
     .fn()
@@ -44,6 +52,7 @@ function setup(
   const prisma = {
     ticket: { findUnique },
     blockchainTransaction: { findFirst, update },
+    userWallet: { findFirst: userWalletFindFirst },
   };
   const circle = { executeContract, pollUntilTerminal };
   const config = { get };
@@ -57,6 +66,7 @@ function setup(
     proc,
     findUnique,
     findFirst,
+    userWalletFindFirst,
     update,
     executeContract,
     pollUntilTerminal,
@@ -68,6 +78,7 @@ function job(
     ticketId: 't-1',
     eventId: 'e-1',
     blockchainTxId: 'bt-1',
+    scannedBy: 'u-scanner',
   },
   attemptsMade = 0,
 ): Job<CheckinTicketJobData> {
@@ -93,10 +104,31 @@ describe('TicketCheckinProcessor', () => {
         txType: BlockchainTxType.CHECKIN,
         ticketId: 't-1',
         existingBlockchainTransactionId: 'bt-1',
+        // Signed by the scanner's wallet (holds the ticketAdmin role),
+        // not the treasury.
+        walletId: 'scw-1',
       }),
     );
     // Webhook authoritative → no polling.
     expect(m.pollUntilTerminal).not.toHaveBeenCalled();
+  });
+
+  it('throws when the job has no scannedBy (cannot resolve a signer)', async () => {
+    const m = setup({ webhooksEnabled: true });
+
+    await expect(
+      m.proc.process(
+        job({ ticketId: 't-1', eventId: 'e-1', blockchainTxId: 'bt-1' }),
+      ),
+    ).rejects.toThrow(/no scannedBy/);
+    expect(m.executeContract).not.toHaveBeenCalled();
+  });
+
+  it('throws when the scanner has no ready wallet on the chain', async () => {
+    const m = setup({ webhooksEnabled: true, scannerWallet: null });
+
+    await expect(m.proc.process(job())).rejects.toThrow(/no ready wallet/);
+    expect(m.executeContract).not.toHaveBeenCalled();
   });
 
   it('is idempotent: skips when a CONFIRMED check-in already exists', async () => {
@@ -157,7 +189,15 @@ describe('TicketCheckinProcessor', () => {
 
     await expect(
       m.proc.process(
-        job({ ticketId: 't-1', eventId: 'e-1', blockchainTxId: 'bt-1' }, 2),
+        job(
+          {
+            ticketId: 't-1',
+            eventId: 'e-1',
+            blockchainTxId: 'bt-1',
+            scannedBy: 'u-scanner',
+          },
+          2,
+        ),
       ),
     ).rejects.toThrow('circle 500');
     expect(m.update).toHaveBeenCalledWith(
