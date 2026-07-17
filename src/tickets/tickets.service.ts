@@ -587,7 +587,8 @@ export class TicketsService {
         transactionId: transaction.id,
         buyerId,
         chain: event.chain,
-        amountNgn: totalAmount,
+        priceNgn: ticketType.price,
+        quantity: dto.quantity,
       });
       return {
         reference: transaction.reference,

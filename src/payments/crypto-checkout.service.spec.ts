@@ -49,13 +49,17 @@ describe('CryptoCheckoutService', () => {
         transactionId: 'txn-1',
         buyerId: 'buyer-1',
         chain: 'BASE-SEPOLIA',
-        amountNgn: new Prisma.Decimal(5000),
+        priceNgn: new Prisma.Decimal(5000),
+        quantity: 1,
       });
 
+      // Organizer-bears: face price is 3.125 USDC; ticketFee is backed out
+      // of it and HostIT's 3% added back, landing at totalFee 3.124999 (a
+      // 1-base-unit rounding delta from face) — what the buyer must send.
       expect(intent).toMatchObject({
         chain: 'BASE-SEPOLIA',
         address: '0xWALLET',
-        amountUsdc: '3.125',
+        amountUsdc: '3.124999',
         usdcAddress: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
         decimals: 6,
       });
@@ -68,7 +72,7 @@ describe('CryptoCheckoutService', () => {
         address: '0xWALLET',
         chain: 'BASE-SEPOLIA',
       });
-      expect(createArg.data.amountUsdc.toString()).toBe('3.125');
+      expect(createArg.data.amountUsdc.toString()).toBe('3.124999');
     });
 
     it('rejects when the buyer wallet is not yet provisioned', async () => {
@@ -83,7 +87,8 @@ describe('CryptoCheckoutService', () => {
           transactionId: 'txn-1',
           buyerId: 'buyer-1',
           chain: 'BASE-SEPOLIA',
-          amountNgn: new Prisma.Decimal(5000),
+          priceNgn: new Prisma.Decimal(5000),
+          quantity: 1,
         }),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(prisma.cryptoDeposit.create).not.toHaveBeenCalled();
@@ -98,7 +103,8 @@ describe('CryptoCheckoutService', () => {
           transactionId: 'txn-1',
           buyerId: 'buyer-1',
           chain: 'BASE-SEPOLIA',
-          amountNgn: new Prisma.Decimal(5000),
+          priceNgn: new Prisma.Decimal(5000),
+          quantity: 1,
         }),
       ).rejects.toBeInstanceOf(BadRequestException);
     });

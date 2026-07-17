@@ -20,6 +20,7 @@ import {
   Prisma,
 } from '@prisma/client';
 import * as crypto from 'crypto';
+import { computeUsdcFees } from '../blockchain/onchain-fees';
 
 @Injectable()
 export class EventsService {
@@ -515,14 +516,11 @@ export class EventsService {
     // BlockchainTransaction row per type so the worker can attach the
     // Circle transactionId to the right row when it runs.
     // On-chain fees are denominated in USDC (6-dp), converted from the
-    // event's NGN price via the flat rate. This is the `ticketFee` the
-    // contract stores; it adds HostIT's 3% on top as `hostItFee`, so the
-    // buyer pays ticketFee + 3% (buyer-bears model). Revisit if we move to
-    // organizer-selected fee tokens / fee-inclusive pricing.
+    // event's NGN price. `computeUsdcFees` runs the ORGANIZER-BEARS model
+    // (buyer pays face price; HostIT's cut is backed out of `ticketFee`) so
+    // the buyer sees the same number on the fiat and crypto rails.
     const usdcNgnRate =
       this.configService.getOrThrow<number>('crypto.usdcNgnRate');
-    const toUsdcBaseUnits = (priceNgn: Prisma.Decimal | string): string =>
-      new Prisma.Decimal(priceNgn).div(usdcNgnRate).mul(1_000_000).toFixed(0);
 
     const ticketTypePayloads = event.ticketTypes.map((tt) => ({
       ticketTypeId: tt.id,
@@ -542,7 +540,7 @@ export class EventsService {
       // ignore fees on-chain (createTicket skips setTicketFees when
       // isFree), so the converted value is harmless there.
       feeTypes: ['USDC'],
-      prices: [toUsdcBaseUnits(tt.price)],
+      prices: [computeUsdcFees(tt.price, usdcNgnRate).ticketFee],
     }));
 
     // Atomic transition + per-type BlockchainTransaction rows

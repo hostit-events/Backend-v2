@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import {
   BlockchainTxStatus,
   BlockchainTxType,
+  PaymentProvider,
   TicketStatus,
   WalletCreationStatus,
 } from '@prisma/client';
@@ -11,8 +12,11 @@ import { Job } from 'bullmq';
 import { Prisma } from '@prisma/client';
 import { id as keccak256Utf8 } from 'ethers';
 import { PrismaService } from '../prisma/prisma.service';
+import { BlockchainReadService } from './blockchain-read.service';
+import { getChain } from './chains.config';
 import { CircleContractService } from './circle-contract.service';
 import { MintFinalizerService } from './mint-finalizer.service';
+import { FEE_TYPE_USDC } from './onchain-fees';
 import {
   MINT_TICKET_JOB,
   MintTicketJobData,
@@ -53,6 +57,7 @@ export class MintTicketProcessor extends WorkerHost {
     private readonly circle: CircleContractService,
     private readonly finalizer: MintFinalizerService,
     private readonly config: ConfigService,
+    private readonly read: BlockchainReadService,
   ) {
     super();
   }
@@ -69,6 +74,7 @@ export class MintTicketProcessor extends WorkerHost {
       where: { id: ticketId },
       include: {
         ticketType: true,
+        transaction: { select: { provider: true } },
         event: {
           select: {
             id: true,
@@ -143,35 +149,97 @@ export class MintTicketProcessor extends WorkerHost {
       );
     }
 
-    try {
-      // Off-chain price recorded on-chain in the smallest fiat unit
-      // (kobo for NGN). paymentId is deterministic per ticket so a
-      // retry reuses it — the contract's replay guard + our tokenId
-      // idempotency check keep a re-mint safe.
-      const amountMinor = new Prisma.Decimal(ticket.ticketType.price)
-        .mul(100)
-        .toFixed(0);
-      const paymentId = keccak256Utf8(ticket.reference);
+    // Crypto purchases settle on-chain via the paid `mintTicket` (the
+    // buyer's own wallet pays USDC and the contract splits the revenue);
+    // fiat purchases issue a free `mintFiatTicket` (payment already split
+    // at the gateway). Routed by the originating transaction's provider.
+    const isCrypto = ticket.transaction?.provider === PaymentProvider.CRYPTO;
 
-      const args = [
-        ticket.ticketType.onChainTicketId,
-        wallet.address,
-        amountMinor,
-        paymentId,
-      ];
+    try {
+      let method: string;
+      let args: unknown[];
+      let signerWalletId: string | undefined;
+
+      if (isCrypto) {
+        // Buyer's wallet (gas-sponsored, in the user set) pays the
+        // contract. Read the authoritative on-chain totalFee, approve the
+        // Diamond to pull it, then mintTicket — which routes the split by
+        // `isRefundable` (instant to the organizer for non-refundable,
+        // escrow for refundable) and mints the NFT to the buyer.
+        if (!wallet.circleWalletId) {
+          throw new Error(
+            `Buyer wallet ${wallet.id} has no circleWalletId; cannot sign crypto mint`,
+          );
+        }
+        const chainCfg = getChain(ticket.event.chain);
+        const { totalFee } = await this.read.getAllFees(
+          ticket.event.chain,
+          ticket.ticketType.onChainTicketId,
+          FEE_TYPE_USDC,
+        );
+
+        const { circleTransactionId: approveTxId } =
+          await this.circle.approveErc20({
+            walletId: wallet.circleWalletId,
+            tokenAddress: chainCfg.usdcAddress,
+            spender: chainCfg.diamondAddress,
+            amount: totalFee.toString(),
+            chain: ticket.event.chain,
+          });
+
+        // The allowance must be on-chain before mintTicket's transferFrom.
+        // Poll inline (persist: false — the approve isn't a tracked row).
+        const approved = await this.circle.pollUntilTerminal(approveTxId, {
+          intervalMs: 4_000,
+          timeoutMs: 180_000,
+          persist: false,
+        });
+        if (approved.state !== 'CONFIRMED' && approved.state !== 'COMPLETE') {
+          throw new Error(
+            `USDC approve for ticket ${ticket.id} ended ${approved.state}: ${approved.errorReason ?? '(no reason)'}`,
+          );
+        }
+
+        method = 'mintTicket';
+        args = [
+          ticket.ticketType.onChainTicketId, // uint64 _ticketId
+          FEE_TYPE_USDC, // enum FeeType _feeType (USDC)
+          wallet.address, // address _buyer (NFT recipient)
+        ];
+        signerWalletId = wallet.circleWalletId;
+      } else {
+        // Off-chain price recorded on-chain in the smallest fiat unit
+        // (kobo for NGN). paymentId is deterministic per ticket so a
+        // retry reuses it — the contract's replay guard + our tokenId
+        // idempotency check keep a re-mint safe.
+        const amountMinor = new Prisma.Decimal(ticket.ticketType.price)
+          .mul(100)
+          .toFixed(0);
+        const paymentId = keccak256Utf8(ticket.reference);
+        method = 'mintFiatTicket';
+        args = [
+          ticket.ticketType.onChainTicketId,
+          wallet.address,
+          amountMinor,
+          paymentId,
+        ];
+        // signerWalletId undefined → executeContract defaults to treasury
+        // (the Diamond's trusted backend for the fiat mint path).
+      }
 
       const { circleTransactionId } = await this.circle.executeContract({
-        method: 'mintFiatTicket',
+        method,
         args,
         chain: ticket.event.chain,
         txType: BlockchainTxType.MINT,
         eventId: ticket.event.id,
         ticketId: ticket.id,
         existingBlockchainTransactionId: blockchainTxId,
+        walletId: signerWalletId,
       });
 
       this.logger.log(
-        `mintFiatTicket submitted (ticket=${ticket.id}, circleTxId=${circleTransactionId})`,
+        `${method} submitted (ticket=${ticket.id}, circleTxId=${circleTransactionId})`,
       );
 
       // When the Circle webhook is wired (#65) it is authoritative for
@@ -179,7 +247,7 @@ export class MintTicketProcessor extends WorkerHost {
       // reconciles + finalizes when the transaction notification lands.
       if (this.config.get<boolean>('circle.webhooksEnabled')) {
         this.logger.log(
-          `mintTicket awaiting Circle webhook for completion (ticket=${ticket.id})`,
+          `${method} awaiting Circle webhook for completion (ticket=${ticket.id})`,
         );
         return;
       }
