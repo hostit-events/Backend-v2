@@ -5,6 +5,7 @@ import {
   BlockchainTxStatus,
   BlockchainTxType,
   EventStatus,
+  WalletCreationStatus,
 } from '@prisma/client';
 import { Interface, type LogDescription } from 'ethers';
 import { PrismaService } from '../prisma/prisma.service';
@@ -13,20 +14,27 @@ import { BlockchainReadService } from './blockchain-read.service';
 import { CircleContractService } from './circle-contract.service';
 
 /**
- * Numeric codes from the Diamond's FeeType enum (LibAddressesAndFees.sol).
- * Producer ships strings (`'ETH'`, `'USDC'`, ...) so the API stays
- * symbolic; we map to the on-chain enum here.
+ * Numeric codes from the Diamond's FeeType enum, matching the verified
+ * MarketplaceFacet deployed on Base (Blockscout-confirmed). Producer ships
+ * strings (`'USDC'`, `'NATIVE'`, ...) so the API stays symbolic; we map to
+ * the on-chain enum here.
+ *
+ * NOTE: this replaced the stale Lisk-era ordering (`ETH=1, USDT=3, USDC=4`).
+ * The live Base enum renamed `ETH`→`NATIVE`, inserted `FIAT` at 1, and
+ * shifted the token codes — so the old map encoded USDC as USDT on-chain.
+ * `FIAT` (1) is intentionally omitted: it is not mintable via `mintTicket`
+ * and not settable via `setTicketFees` (the contract reverts).
  */
 const FEE_TYPE_BY_NAME: Record<string, number> = {
-  ETH: 1,
-  WETH: 2,
-  USDT: 3,
-  USDC: 4,
-  USDT0: 5,
-  EURC: 6,
-  GHO: 7,
-  LINK: 8,
-  LSK: 9,
+  NATIVE: 2,
+  WNATIVE: 3,
+  USDT: 4,
+  USDC: 5,
+  USDT0: 6,
+  EURC: 7,
+  GHO: 8,
+  LINK: 9,
+  LSK: 10,
 };
 
 const EVENT_PUBLISH_QUEUE = 'event-publish';
@@ -103,6 +111,33 @@ export class EventPublishProcessor extends WorkerHost {
       return;
     }
 
+    // The organizer must sign createTicket so they become the ticket's
+    // on-chain admin: `ticketAdmin` (the instant crypto-payout target for
+    // non-refundable events + the mainAdmin who can withdraw refundable
+    // balances) and the `ticketAdminRole` holder that gates check-in.
+    // Signing with the treasury would make HostIT the admin instead.
+    const event = await this.prisma.event.findUnique({
+      where: { id: data.eventId },
+      select: { organizerId: true },
+    });
+    if (!event) {
+      throw new Error(`Event ${data.eventId} not found`);
+    }
+    const organizerWallet = await this.prisma.userWallet.findFirst({
+      where: {
+        userId: event.organizerId,
+        chain: data.chain,
+        creationStatus: WalletCreationStatus.CREATED,
+      },
+    });
+    if (!organizerWallet?.circleWalletId) {
+      // Transient during provisioning: throw so Bull retries with backoff
+      // while Circle finishes creating the organizer's wallet.
+      throw new Error(
+        `Organizer ${event.organizerId} has no ready wallet on ${data.chain} — cannot sign createTicket`,
+      );
+    }
+
     try {
       const args = this.buildCreateTicketArgs(data);
 
@@ -113,6 +148,7 @@ export class EventPublishProcessor extends WorkerHost {
         txType: BlockchainTxType.CREATE_EVENT,
         eventId: data.eventId,
         existingBlockchainTransactionId: data.blockchainTxId,
+        walletId: organizerWallet.circleWalletId,
       });
 
       this.logger.log(

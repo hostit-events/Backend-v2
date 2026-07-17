@@ -1,7 +1,11 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { BlockchainTxStatus, BlockchainTxType } from '@prisma/client';
+import {
+  BlockchainTxStatus,
+  BlockchainTxType,
+  WalletCreationStatus,
+} from '@prisma/client';
 import { Job } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { CircleContractService } from './circle-contract.service';
@@ -52,7 +56,7 @@ export class TicketCheckinProcessor extends WorkerHost {
       return;
     }
 
-    const { ticketId, blockchainTxId } = job.data;
+    const { ticketId, blockchainTxId, scannedBy } = job.data;
 
     const ticket = await this.prisma.ticket.findUnique({
       where: { id: ticketId },
@@ -108,6 +112,27 @@ export class TicketCheckinProcessor extends WorkerHost {
       );
     }
 
+    // On-chain checkIn is gated to `ticketAdminRole` holders and must be
+    // signed by the scanner (organizer by default, or a delegated admin) —
+    // not the treasury. Resolve the scanner's Circle wallet as the signer.
+    if (!scannedBy) {
+      throw new Error(
+        `Check-in job for ticket ${ticketId} has no scannedBy — cannot resolve a signer holding the on-chain ticketAdmin role`,
+      );
+    }
+    const scannerWallet = await this.prisma.userWallet.findFirst({
+      where: {
+        userId: scannedBy,
+        chain: ticket.event.chain,
+        creationStatus: WalletCreationStatus.CREATED,
+      },
+    });
+    if (!scannerWallet?.circleWalletId) {
+      throw new Error(
+        `Scanner ${scannedBy} has no ready wallet on ${ticket.event.chain} — cannot sign checkIn`,
+      );
+    }
+
     try {
       const args = [
         ticket.ticketType.onChainTicketId, // uint64 _ticketId
@@ -123,6 +148,7 @@ export class TicketCheckinProcessor extends WorkerHost {
         eventId: ticket.event.id,
         ticketId: ticket.id,
         existingBlockchainTransactionId: blockchainTxId,
+        walletId: scannerWallet.circleWalletId,
       });
 
       this.logger.log(

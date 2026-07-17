@@ -29,6 +29,12 @@ export interface ExecuteContractParams {
    *  BlockchainTransaction row instead of creating a new one. Used by
    *  workers that pre-record the queued transaction at enqueue time. */
   existingBlockchainTransactionId?: string;
+  /** Circle wallet id that signs (and therefore is `msg.sender` for) this
+   *  execution. Defaults to the platform treasury wallet. Callers pass an
+   *  organizer/scanner wallet when the on-chain identity must be theirs —
+   *  e.g. `createTicket` (organizer becomes the ticket admin + payout
+   *  target) or `checkIn` (signed by the role-holding scanner). */
+  walletId?: string;
 }
 
 export interface ExecuteContractResult {
@@ -89,10 +95,11 @@ export class CircleContractService {
     );
     const chain = params.chain ?? this.circle.defaultChain;
     const contractAddress = this.resolveDiamondAddress(chain);
+    const signerWalletId = params.walletId ?? this.circle.treasuryWalletId;
 
     const response =
       await this.circle.client.createContractExecutionTransaction({
-        walletId: this.circle.treasuryWalletId,
+        walletId: signerWalletId,
         contractAddress,
         abiFunctionSignature: signature,
         abiParameters,
@@ -115,7 +122,7 @@ export class CircleContractService {
           where: { id: params.existingBlockchainTransactionId },
           data: {
             circleTransactionId,
-            circleWalletId: this.circle.treasuryWalletId,
+            circleWalletId: signerWalletId,
             chain,
           },
         })
@@ -124,7 +131,7 @@ export class CircleContractService {
             type: params.txType,
             status: BlockchainTxStatus.PENDING,
             circleTransactionId,
-            circleWalletId: this.circle.treasuryWalletId,
+            circleWalletId: signerWalletId,
             chain,
             ticketId: params.ticketId,
             eventId: params.eventId,
