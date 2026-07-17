@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Prisma, WalletCreationStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { getChain } from '../blockchain/chains.config';
+import { computeUsdcFees } from '../blockchain/onchain-fees';
 
 /** USDC is 6-decimal everywhere Circle issues it. */
 const USDC_DECIMALS = 6;
@@ -56,7 +57,9 @@ export class CryptoCheckoutService {
     transactionId: string;
     buyerId: string;
     chain: string;
-    amountNgn: Prisma.Decimal;
+    /** Unit ticket price in the event currency (NGN). */
+    priceNgn: Prisma.Decimal | string;
+    quantity: number;
   }): Promise<DepositIntent> {
     const chainCfg = getChain(input.chain);
 
@@ -74,7 +77,19 @@ export class CryptoCheckoutService {
       );
     }
 
-    const amountUsdc = this.ngnToUsdc(input.amountNgn);
+    // The deposit must cover the on-chain `totalFee` (ticketFee + HostIT's
+    // cut) for every ticket, since `mintTicket` pulls totalFee per mint from
+    // this wallet. Estimated off-chain via the shared fee helper (same math
+    // that set the on-chain ticketFee at publish); the settlement worker
+    // approves the authoritative on-chain totalFee at mint time.
+    const usdcNgnRate = this.config.getOrThrow<number>('crypto.usdcNgnRate');
+    const totalFeeBaseUnits = computeUsdcFees(
+      input.priceNgn,
+      usdcNgnRate,
+    ).totalFee;
+    const amountUsdc = new Prisma.Decimal(totalFeeBaseUnits)
+      .mul(input.quantity)
+      .div(10 ** USDC_DECIMALS);
     const expiryMinutes = this.config.getOrThrow<number>(
       'crypto.depositExpiryMinutes',
     );

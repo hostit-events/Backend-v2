@@ -12,30 +12,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { diamondAbi } from './abis';
 import { BlockchainReadService } from './blockchain-read.service';
 import { CircleContractService } from './circle-contract.service';
-
-/**
- * Numeric codes from the Diamond's FeeType enum, matching the verified
- * MarketplaceFacet deployed on Base (Blockscout-confirmed). Producer ships
- * strings (`'USDC'`, `'NATIVE'`, ...) so the API stays symbolic; we map to
- * the on-chain enum here.
- *
- * NOTE: this replaced the stale Lisk-era ordering (`ETH=1, USDT=3, USDC=4`).
- * The live Base enum renamed `ETH`→`NATIVE`, inserted `FIAT` at 1, and
- * shifted the token codes — so the old map encoded USDC as USDT on-chain.
- * `FIAT` (1) is intentionally omitted: it is not mintable via `mintTicket`
- * and not settable via `setTicketFees` (the contract reverts).
- */
-const FEE_TYPE_BY_NAME: Record<string, number> = {
-  NATIVE: 2,
-  WNATIVE: 3,
-  USDT: 4,
-  USDC: 5,
-  USDT0: 6,
-  EURC: 7,
-  GHO: 8,
-  LINK: 9,
-  LSK: 10,
-};
+import { FEE_TYPE_BY_NAME } from './onchain-fees';
 
 const EVENT_PUBLISH_QUEUE = 'event-publish';
 const CREATE_EVENT_JOB = 'create-event';

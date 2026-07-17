@@ -148,6 +148,47 @@ export class CircleContractService {
     };
   }
 
+  /**
+   * Approve an ERC-20 spender from a developer-controlled wallet. Used to
+   * let the Diamond pull USDC from the buyer's wallet before `mintTicket`.
+   * Runs against the token contract (not the Diamond), so it bypasses the
+   * diamond ABI / address resolution. Returns the Circle transaction id;
+   * poll it (persist: false) to confirm before the dependent transfer.
+   */
+  async approveErc20(params: {
+    walletId: string;
+    tokenAddress: string;
+    spender: string;
+    /** Allowance in token base units. */
+    amount: string;
+    chain: string;
+    feeLevel?: FeeLevel;
+  }): Promise<{ circleTransactionId: string }> {
+    const response =
+      await this.circle.client.createContractExecutionTransaction({
+        walletId: params.walletId,
+        contractAddress: params.tokenAddress,
+        abiFunctionSignature: 'approve(address,uint256)',
+        abiParameters: [params.spender, params.amount],
+        fee: {
+          type: 'level',
+          config: { feeLevel: params.feeLevel ?? 'MEDIUM' },
+        },
+      });
+
+    const circleTransactionId = response.data?.id;
+    if (!circleTransactionId) {
+      throw new Error(
+        `Circle returned no transactionId for approve: ${JSON.stringify(response.data)}`,
+      );
+    }
+
+    this.logger.log(
+      `Submitted USDC approve via Circle (chain=${params.chain}, spender=${params.spender}, amount=${params.amount}, txId=${circleTransactionId})`,
+    );
+    return { circleTransactionId };
+  }
+
   /** Estimate gas tiers for a Diamond method without sending. */
   async estimateFee(
     method: string,
@@ -191,7 +232,14 @@ export class CircleContractService {
    *  this — they will move to webhook-driven completion in #65. */
   async pollUntilTerminal(
     circleTransactionId: string,
-    options: { intervalMs?: number; timeoutMs?: number } = {},
+    options: {
+      intervalMs?: number;
+      timeoutMs?: number;
+      /** Mirror the terminal state onto a BlockchainTransaction row.
+       *  Set false for txs we don't track (e.g. the ERC-20 approve leg),
+       *  where `reconcile` would fail to find a matching row. */
+      persist?: boolean;
+    } = {},
   ): Promise<CircleTransactionSnapshot> {
     const interval = options.intervalMs ?? 3_000;
     const timeout = options.timeoutMs ?? 120_000;
@@ -200,7 +248,9 @@ export class CircleContractService {
     while (Date.now() < deadline) {
       const snapshot = await this.getTransactionStatus(circleTransactionId);
       if (TERMINAL_STATES.has(snapshot.state)) {
-        await this.reconcile(circleTransactionId, snapshot);
+        if (options.persist !== false) {
+          await this.reconcile(circleTransactionId, snapshot);
+        }
         return snapshot;
       }
       await new Promise((r) => setTimeout(r, interval));
