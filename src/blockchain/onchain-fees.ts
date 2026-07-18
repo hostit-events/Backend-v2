@@ -19,8 +19,21 @@ export const FEE_TYPE_BY_NAME: Record<string, number> = {
   LSK: 10,
 };
 
-/** On-chain FeeType code for USDC — HostIT's crypto settlement token. */
-export const FEE_TYPE_USDC = FEE_TYPE_BY_NAME.USDC;
+/**
+ * ⚠️ TEMPORARY TESTNET WORKAROUND — revert after the Diamond is redeployed.
+ *
+ * The deployed Base Sepolia Diamond has the real USDC token address
+ * registered under the **USDT (4)** slot; `FeeType.USDC (5)` is UNSET, so
+ * `mintTicket(…, USDC, …)` reverts `TokenAddressZero()`. Until a redeploy
+ * maps USDC (5) → 0x036CbD5…, we route crypto settlement (publish fee +
+ * approve + mintTicket) through the USDT slot, which resolves to the USDC
+ * token on-chain. Flip `SETTLEMENT_FEE_TYPE_NAME` back to `'USDC'` once the
+ * contract is fixed. Tracked in epic #96.
+ */
+export const SETTLEMENT_FEE_TYPE_NAME = 'USDT';
+
+/** On-chain FeeType code used for crypto (USDC) settlement. */
+export const FEE_TYPE_USDC = FEE_TYPE_BY_NAME[SETTLEMENT_FEE_TYPE_NAME];
 
 /** USDC is 6-decimal everywhere Circle issues it. */
 export const USDC_DECIMALS = 6;
