@@ -6,6 +6,7 @@ import { PaymentsService } from '../payments/payments.service';
 import { CryptoCheckoutService } from '../payments/crypto-checkout.service';
 import { WalletsService } from '../wallets/wallets.service';
 import { CheckinQueueService } from '../blockchain/checkin-queue.service';
+import { MintQueueService } from '../blockchain/mint-queue.service';
 import { TicketsService } from './tickets.service';
 import { QueryMyTicketsDto } from './dto/query-my-tickets.dto';
 import { VerifyTicketDto } from './dto/verify-ticket.dto';
@@ -58,6 +59,7 @@ function makeService(
     {} as unknown as WalletsService,
     config,
     checkinQueue as unknown as CheckinQueueService,
+    { enqueueMint: jest.fn() } as unknown as MintQueueService,
   );
 }
 

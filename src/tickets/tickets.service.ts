@@ -24,6 +24,7 @@ import { CryptoCheckoutService } from '../payments/crypto-checkout.service';
 import { WalletsService } from '../wallets/wallets.service';
 import { ConfigService } from '@nestjs/config';
 import { CheckinQueueService } from '../blockchain/checkin-queue.service';
+import { MintQueueService } from '../blockchain/mint-queue.service';
 import { PurchaseTicketDto } from './dto/purchase-ticket.dto';
 import { QueryMyTicketsDto } from './dto/query-my-tickets.dto';
 import { VerifyTicketDto } from './dto/verify-ticket.dto';
@@ -97,6 +98,8 @@ export class TicketsService {
     // so the back-reference for the check-in queue is circular.
     @Inject(forwardRef(() => CheckinQueueService))
     private readonly checkinQueue: CheckinQueueService,
+    @Inject(forwardRef(() => MintQueueService))
+    private readonly mintQueue: MintQueueService,
   ) {
     // Where the gateway redirects after checkout. For local dev this
     // is fine as a relative-ish URL; staging/prod override via env.
@@ -583,13 +586,40 @@ export class TicketsService {
     // instruction; the `transactions.inbound` webhook settles the
     // transaction and triggers minting (see CircleWebhookProcessor).
     if (dto.paymentProvider === PaymentProvider.CRYPTO) {
-      const deposit = await this.cryptoCheckout.createDepositIntent({
+      const plan = await this.cryptoCheckout.prepareCrypto({
         transactionId: transaction.id,
         buyerId,
         chain: event.chain,
         priceNgn: ticketType.price,
         quantity: dto.quantity,
       });
+
+      // Enough USDC already in the buyer's custodial wallet — settle now:
+      // mark the transaction paid and enqueue the mints, which spend
+      // straight from balance (approve + mintTicket). No deposit step.
+      if (plan.mode === 'balance') {
+        await this.prisma.transaction.update({
+          where: { id: transaction.id },
+          data: { status: TransactionStatus.SUCCESS },
+        });
+        for (const t of tickets) {
+          await this.mintQueue.enqueueMint(t.id, event.id);
+        }
+        return {
+          reference: transaction.reference,
+          checkoutUrl: null,
+          amount: Number(totalAmount),
+          currency: 'NGN',
+          provider: dto.paymentProvider,
+          tickets,
+          free: false,
+          paidFromBalance: true,
+          crypto: null,
+        };
+      }
+
+      // Short — the buyer tops up the shortfall; the inbound webhook
+      // settles once it lands.
       return {
         reference: transaction.reference,
         checkoutUrl: null,
@@ -598,7 +628,8 @@ export class TicketsService {
         provider: dto.paymentProvider,
         tickets,
         free: false,
-        crypto: deposit,
+        paidFromBalance: false,
+        crypto: plan.deposit,
       };
     }
 

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { CircleModule } from '../circle/circle.module';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
 import { CryptoCheckoutService } from './crypto-checkout.service';
@@ -10,6 +11,7 @@ import { PaystackProvider } from './providers/paystack.provider';
  * follow-up PRs and registered with `PaymentsService` here.
  */
 @Module({
+  imports: [CircleModule],
   controllers: [PaymentsController],
   providers: [
     PaymentsService,
