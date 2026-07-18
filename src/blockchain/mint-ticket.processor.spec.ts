@@ -1,6 +1,7 @@
 import { BlockchainTxType, WalletCreationStatus } from '@prisma/client';
 import type { Job } from 'bullmq';
 import { MintTicketProcessor } from './mint-ticket.processor';
+import { FEE_TYPE_USDC } from './onchain-fees';
 import { MINT_TICKET_JOB, MintTicketJobData } from './mint-queue.service';
 
 // getChain is env-driven; stub the USDC + Diamond addresses.
@@ -83,8 +84,12 @@ describe('MintTicketProcessor', () => {
 
     await m.proc.process(job());
 
-    // Authoritative on-chain fee read for the USDC feeType (5).
-    expect(m.getAllFees).toHaveBeenCalledWith('BASE-SEPOLIA', 7n, 5);
+    // Authoritative on-chain fee read for the crypto settlement feeType.
+    expect(m.getAllFees).toHaveBeenCalledWith(
+      'BASE-SEPOLIA',
+      7n,
+      FEE_TYPE_USDC,
+    );
     // Approve the Diamond to pull exactly totalFee from the buyer wallet.
     expect(m.approveErc20).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -98,7 +103,7 @@ describe('MintTicketProcessor', () => {
     expect(m.executeContract).toHaveBeenCalledWith(
       expect.objectContaining({
         method: 'mintTicket',
-        args: [7n, 5, '0xBUYER'],
+        args: [7n, FEE_TYPE_USDC, '0xBUYER'],
         walletId: 'cw-buyer',
         txType: BlockchainTxType.MINT,
         existingBlockchainTransactionId: 'bt-1',

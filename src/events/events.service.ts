@@ -20,7 +20,10 @@ import {
   Prisma,
 } from '@prisma/client';
 import * as crypto from 'crypto';
-import { computeUsdcFees } from '../blockchain/onchain-fees';
+import {
+  computeUsdcFees,
+  SETTLEMENT_FEE_TYPE_NAME,
+} from '../blockchain/onchain-fees';
 
 @Injectable()
 export class EventsService {
@@ -536,10 +539,11 @@ export class EventsService {
         symbol: `${eventSymbol}-${tt.name.replace(/\s+/g, '').slice(0, 4).toUpperCase()}`,
         uri: `https://api.hostit.ng/events/${event.slug}/${tt.id}/metadata`,
       },
-      // Crypto checkout settles in USDC via `mintTicket`. Free events
-      // ignore fees on-chain (createTicket skips setTicketFees when
-      // isFree), so the converted value is harmless there.
-      feeTypes: ['USDC'],
+      // Crypto checkout settles in USDC via `mintTicket`. The on-chain fee
+      // slot is `SETTLEMENT_FEE_TYPE_NAME` (temporarily USDT — see
+      // onchain-fees.ts). Free events ignore fees on-chain (createTicket
+      // skips setTicketFees when isFree), so the value is harmless there.
+      feeTypes: [SETTLEMENT_FEE_TYPE_NAME],
       prices: [computeUsdcFees(tt.price, usdcNgnRate).ticketFee],
     }));
 
