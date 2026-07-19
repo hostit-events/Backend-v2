@@ -40,6 +40,13 @@ export class EventsController {
     return this.eventsService.findMyDrafts(organizerId);
   }
 
+  @Get('chains')
+  @Public()
+  @ApiOperation({ summary: 'List selectable settlement chains for events' })
+  listChains() {
+    return this.eventsService.listChains();
+  }
+
   @Get(':slug')
   @Public()
   @ApiOperation({ summary: 'Get event details by slug' })

@@ -24,6 +24,11 @@ import {
   computeUsdcFees,
   SETTLEMENT_FEE_TYPE_NAME,
 } from '../blockchain/onchain-fees';
+import {
+  getChain,
+  getDefaultChain,
+  listActiveChains,
+} from '../blockchain/chains.config';
 
 @Injectable()
 export class EventsService {
@@ -35,6 +40,39 @@ export class EventsService {
     private readonly notifications: NotificationsService,
     private readonly configService: ConfigService,
   ) {}
+
+  /**
+   * Selectable settlement chains for the client picker. ACTIVE_CHAINS is the
+   * single source of truth for what's available — a testnet-only prod (e.g.
+   * Base Sepolia) is a valid, intentional configuration.
+   */
+  listChains() {
+    return listActiveChains().map((c) => ({
+      id: c.id,
+      displayName: c.displayName,
+      isTestnet: c.isTestnet,
+    }));
+  }
+
+  /**
+   * Resolve the chain an event settles on. Omitted → the server default
+   * (first in ACTIVE_CHAINS). Explicit values must be an active chain.
+   * Returns the canonical chain id.
+   */
+  private resolveEventChain(requested?: string): string {
+    if (!requested) return getDefaultChain().id;
+
+    try {
+      return getChain(requested).id;
+    } catch {
+      const active = listActiveChains()
+        .map((c) => c.id)
+        .join(', ');
+      throw new BadRequestException(
+        `Unsupported chain "${requested}". Active chains: ${active}`,
+      );
+    }
+  }
 
   async create(organizerId: string, dto: CreateEventDto) {
     // Organizers can create events immediately — crypto payments are always
@@ -106,12 +144,14 @@ export class EventsService {
     }
 
     const slug = await this.generateUniqueSlug(dto.name);
+    const chain = this.resolveEventChain(dto.chain);
 
     const event = await this.prisma.event.create({
       data: {
         organizerId,
         name: dto.name,
         slug,
+        chain,
         description: dto.description,
         venue: dto.venue,
         location: dto.location,
