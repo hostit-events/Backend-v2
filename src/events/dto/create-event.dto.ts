@@ -97,6 +97,16 @@ export class CreateEventDto {
   @IsBoolean()
   isRefundable?: boolean;
 
+  /**
+   * Settlement chain for the event's on-chain ticket entries. Must be one
+   * of the server's active chains (see GET /events/chains). Omit to use the
+   * server default. Immutable after creation.
+   */
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  chain?: string;
+
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(5)

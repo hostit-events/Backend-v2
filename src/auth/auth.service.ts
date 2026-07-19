@@ -61,13 +61,13 @@ export class AuthService {
       },
     });
 
-    // Enqueue Circle wallet creation. Async so registration latency
-    // isn't tied to Circle availability; Bull retries on transient
-    // failure and FAILED state is recoverable via the admin endpoint
-    // (#64). register() always creates BUYER users, so no role gate
-    // needed here — the processor is defensive regardless.
+    // Enqueue Circle wallet creation on every active chain. Async so
+    // registration latency isn't tied to Circle availability; Bull retries
+    // on transient failure and FAILED state is recoverable via the admin
+    // endpoint (#64). register() always creates BUYER users, so no role
+    // gate needed here — the processor is defensive regardless.
     try {
-      await this.walletsService.enqueueWalletCreation(user.id);
+      await this.walletsService.ensureWalletsForActiveChains(user.id);
     } catch (err) {
       // Redis/queue outage shouldn't block registration. The user
       // lands without a wallet; admin retry picks them up later.
@@ -143,6 +143,17 @@ export class AuthService {
 
     if (!isPasswordValid) {
       throw new UnauthorizedException('Invalid credentials');
+    }
+
+    // Reconcile wallets on login so users self-heal into any chain added
+    // since they last visited. Idempotent + fire-and-forget — a queue
+    // outage must never block login.
+    try {
+      await this.walletsService.ensureWalletsForActiveChains(user.id);
+    } catch (err) {
+      this.logger.warn(
+        `Failed to reconcile wallets for user ${user.id} on login: ${(err as Error).message}`,
+      );
     }
 
     const accessToken = this.generateToken(user.id, user.email, user.role);
