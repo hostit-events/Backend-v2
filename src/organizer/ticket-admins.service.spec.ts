@@ -74,7 +74,7 @@ function setup(opts: {
     $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
   };
 
-  const circle = { executeContract: jest.fn(async () => ({})) };
+  const circle = { executeContract: jest.fn(async (_params: any) => ({})) };
   const wallets = { ensureWalletsForActiveChains: jest.fn(async () => undefined) };
 
   const svc = new TicketAdminsService(
