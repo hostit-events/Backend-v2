@@ -309,13 +309,18 @@ model TicketType {
   // On-chain Diamond ticketId returned by createTicket. Each ticket
   // type is its own on-chain entry (one createTicket call per type
   // when the event publishes). Null until the publish job confirms.
-  onChainTicketId BigInt?   @unique @map("on_chain_ticket_id")
+  // Unique per event, NOT globally: each chain's Diamond issues ids from
+  // its own counter starting at 1, so the same numeric id legitimately
+  // recurs across chains. An event is bound to a single chain, so
+  // (eventId, onChainTicketId) is the correct uniqueness scope.
+  onChainTicketId BigInt?   @map("on_chain_ticket_id")
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
 
   event   Event    @relation(fields: [eventId], references: [id])
   tickets Ticket[]
 
+  @@unique([eventId, onChainTicketId])
   @@index([eventId])
   @@map("ticket_types")
 }
