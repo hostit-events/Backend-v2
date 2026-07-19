@@ -1,10 +1,5 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
-import {
-  BlockchainTxType,
-  TicketAdminStatus,
-  UserRole,
-  WalletCreationStatus,
-} from '@prisma/client';
+import { BlockchainTxType, TicketAdminStatus, UserRole } from '@prisma/client';
 import { TicketAdminsService } from './ticket-admins.service';
 
 const ORG = 'org-1';
@@ -30,9 +25,9 @@ function setup(opts: {
     activeAdmins = [],
   } = opts;
 
-  const upsert = jest.fn(async (a: any) => a);
-  const updateMany = jest.fn(async () => ({ count: activeAdmins.length }));
-  const findMany = jest.fn(async () =>
+  const upsert = jest.fn((a: any) => a);
+  const updateMany = jest.fn(() => ({ count: activeAdmins.length }));
+  const findMany = jest.fn(() =>
     activeAdmins.map((a) => ({
       userId: a.userId,
       address: a.address,
@@ -49,7 +44,7 @@ function setup(opts: {
 
   const prisma = {
     event: {
-      findUnique: jest.fn(async () => ({
+      findUnique: jest.fn(() => ({
         id: EVENT,
         organizerId: ownerId,
         chain: CHAIN,
@@ -59,13 +54,13 @@ function setup(opts: {
       })),
     },
     user: {
-      findUnique: jest.fn(async ({ where }: any) => {
+      findUnique: jest.fn(({ where }: any) => {
         const u = users[where.id];
         return u ? { id: where.id, role: u.role } : null;
       }),
     },
     userWallet: {
-      findFirst: jest.fn(async ({ where }: any) => {
+      findFirst: jest.fn(({ where }: any) => {
         if (where.userId === ORG) return organizerWallet;
         return targetWallets[where.userId] ?? null;
       }),
@@ -74,8 +69,8 @@ function setup(opts: {
     $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
   };
 
-  const circle = { executeContract: jest.fn(async (_params: any) => ({})) };
-  const wallets = { ensureWalletsForActiveChains: jest.fn(async () => undefined) };
+  const circle = { executeContract: jest.fn((_params: any) => ({})) };
+  const wallets = { ensureWalletsForActiveChains: jest.fn(() => undefined) };
 
   const svc = new TicketAdminsService(
     prisma as any,

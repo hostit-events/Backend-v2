@@ -121,10 +121,7 @@ export class OrganizerController {
   @Get('events/:id/ticket-admins')
   @Roles(UserRole.ORGANIZER)
   @ApiOperation({ summary: 'List active check-in delegates (ticket admins)' })
-  listTicketAdmins(
-    @Param('id') id: string,
-    @CurrentUser('id') userId: string,
-  ) {
+  listTicketAdmins(@Param('id') id: string, @CurrentUser('id') userId: string) {
     return this.ticketAdmins.listAdmins(userId, id);
   }
 

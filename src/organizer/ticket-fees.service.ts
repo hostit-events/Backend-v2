@@ -57,7 +57,9 @@ export class TicketFeesService {
       throw new ForbiddenException('You do not own this event');
     }
     if (event.isFree) {
-      throw new BadRequestException('Free events have no on-chain fee to update');
+      throw new BadRequestException(
+        'Free events have no on-chain fee to update',
+      );
     }
     if (event.status !== EventStatus.PUBLISHED) {
       throw new BadRequestException(
@@ -88,8 +90,7 @@ export class TicketFeesService {
       event.chain,
     );
 
-    const usdcNgnRate =
-      this.config.getOrThrow<number>('crypto.usdcNgnRate');
+    const usdcNgnRate = this.config.getOrThrow<number>('crypto.usdcNgnRate');
     const { ticketFee } = computeUsdcFees(priceNgn, usdcNgnRate);
 
     // Organizer-signed on-chain fee update. Submitted async (webhook

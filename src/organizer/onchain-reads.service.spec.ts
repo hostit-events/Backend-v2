@@ -25,7 +25,7 @@ function setup(opts: {
 
   const prisma = {
     event: {
-      findUnique: jest.fn(async () => ({
+      findUnique: jest.fn(() => ({
         organizerId: ownerId,
         chain: CHAIN,
         ticketTypes,
@@ -33,10 +33,9 @@ function setup(opts: {
     },
   };
   const readSvc = {
-    getTicketBalance: read.getTicketBalance ?? jest.fn(async () => 1500000n),
-    getCheckedIn:
-      read.getCheckedIn ?? jest.fn(async () => ['0xa', '0xb', '0xc']),
-    getCheckedInForDay: read.getCheckedInForDay ?? jest.fn(async () => ['0xa']),
+    getTicketBalance: read.getTicketBalance ?? jest.fn(() => 1500000n),
+    getCheckedIn: read.getCheckedIn ?? jest.fn(() => ['0xa', '0xb', '0xc']),
+    getCheckedInForDay: read.getCheckedInForDay ?? jest.fn(() => ['0xa']),
   };
   const svc = new OnchainReadsService(prisma as any, readSvc as any);
   return { svc, prisma, readSvc };

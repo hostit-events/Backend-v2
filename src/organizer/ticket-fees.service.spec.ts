@@ -27,7 +27,7 @@ function setup(opts: {
     organizerWalletId = 'org-wallet',
   } = opts;
 
-  const ticketTypeUpdate = jest.fn(async () => ({
+  const ticketTypeUpdate = jest.fn(() => ({
     id: TT,
     name: 'VIP',
     price: '2000',
@@ -35,7 +35,7 @@ function setup(opts: {
 
   const prisma = {
     event: {
-      findUnique: jest.fn(async () => ({
+      findUnique: jest.fn(() => ({
         organizerId: ownerId,
         chain: CHAIN,
         isFree,
@@ -44,19 +44,23 @@ function setup(opts: {
       })),
     },
     ticketType: {
-      findFirst: jest.fn(async () => ({ id: TT, name: 'VIP', onChainTicketId })),
+      findFirst: jest.fn(() => ({ id: TT, name: 'VIP', onChainTicketId })),
       update: ticketTypeUpdate,
     },
     userWallet: {
-      findFirst: jest.fn(async () =>
+      findFirst: jest.fn(() =>
         organizerWalletId ? { circleWalletId: organizerWalletId } : null,
       ),
     },
   };
-  const circle = { executeContract: jest.fn(async (_p: any) => ({})) };
+  const circle = { executeContract: jest.fn((_p: any) => ({})) };
   const config = { getOrThrow: jest.fn(() => 1600) };
 
-  const svc = new TicketFeesService(prisma as any, circle as any, config as any);
+  const svc = new TicketFeesService(
+    prisma as any,
+    circle as any,
+    config as any,
+  );
   return { svc, prisma, circle, ticketTypeUpdate };
 }
 
