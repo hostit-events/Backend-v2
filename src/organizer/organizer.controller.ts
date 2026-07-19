@@ -6,6 +6,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  Patch,
   Post,
   Put,
   Query,
@@ -23,8 +24,10 @@ import { QueryOrganizerEventsDto } from './dto/query-organizer-events.dto';
 import { QueryAttendeesDto } from './dto/query-attendees.dto';
 import { UpdateBankDetailsDto } from './dto/update-bank-details.dto';
 import { TicketAdminsDto } from './dto/ticket-admins.dto';
+import { UpdateTicketFeeDto } from './dto/update-ticket-fee.dto';
 import { OrganizerService } from './organizer.service';
 import { TicketAdminsService } from './ticket-admins.service';
+import { TicketFeesService } from './ticket-fees.service';
 
 /**
  * Per-provider fiat enablement endpoints.
@@ -41,6 +44,7 @@ export class OrganizerController {
   constructor(
     private readonly organizer: OrganizerService,
     private readonly ticketAdmins: TicketAdminsService,
+    private readonly ticketFees: TicketFeesService,
   ) {}
 
   @Get('events')
@@ -145,6 +149,21 @@ export class OrganizerController {
     @Body() dto: TicketAdminsDto,
   ) {
     return this.ticketAdmins.removeAdmins(userId, id, dto.userIds);
+  }
+
+  @Patch('events/:id/tickets/:ticketTypeId/fee')
+  @Roles(UserRole.ORGANIZER)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Update a ticket price (on-chain fee) after publish',
+  })
+  updateTicketFee(
+    @Param('id') id: string,
+    @Param('ticketTypeId') ticketTypeId: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: UpdateTicketFeeDto,
+  ) {
+    return this.ticketFees.updateFee(userId, id, ticketTypeId, dto.priceNgn);
   }
 
   @Post('providers/paystack/enable')
