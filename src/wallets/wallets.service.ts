@@ -6,6 +6,10 @@ import { ConfigService } from '@nestjs/config';
 import { UserRole, WalletCreationStatus, WalletType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  getDefaultChain,
+  listActiveChains,
+} from '../blockchain/chains.config';
+import {
   USER_WALLET_JOB,
   USER_WALLET_QUEUE,
   type UserWalletJobData,
@@ -82,6 +86,44 @@ export class WalletsService {
     this.logger.log(
       `Enqueued wallet creation for user ${userId} (chain=${chain}, type=${walletType})`,
     );
+  }
+
+  /**
+   * Reconcile a user toward the desired state: a DEVELOPER_CONTROLLED
+   * wallet on every active chain (ACTIVE_CHAINS). Idempotent — only the
+   * missing chains are enqueued, so this is safe to call on every login.
+   *
+   * Because it iterates listActiveChains(), adding a new supported chain
+   * (registry + env) needs no code change here: the next time a user
+   * registers, logs in, or buys, the gap is filled automatically.
+   *
+   * The default chain's wallet is pinned primary, but only when the user
+   * has no wallet yet — an existing primary is never demoted. Admins are
+   * skipped (they don't transact on-chain).
+   */
+  async ensureWalletsForActiveChains(userId: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true },
+    });
+    if (!user || user.role === UserRole.ADMIN) return;
+
+    const existing = await this.prisma.userWallet.findMany({
+      where: { userId, walletType: WalletType.DEVELOPER_CONTROLLED },
+      select: { chain: true },
+    });
+    const have = new Set(existing.map((w) => w.chain));
+    const startsEmpty = existing.length === 0;
+    const defaultChainId = getDefaultChain().id;
+
+    for (const chain of listActiveChains()) {
+      if (have.has(chain.id)) continue;
+      await this.enqueueWalletCreation(userId, {
+        chain: chain.id,
+        walletType: WalletType.DEVELOPER_CONTROLLED,
+        isPrimary: startsEmpty && chain.id === defaultChainId,
+      });
+    }
   }
 
   /**

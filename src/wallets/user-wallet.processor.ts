@@ -4,6 +4,7 @@ import { Job } from 'bullmq';
 import { UserRole, WalletCreationStatus } from '@prisma/client';
 import { CircleService } from '../circle/circle.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { getChain } from '../blockchain/chains.config';
 import {
   USER_WALLET_JOB,
   USER_WALLET_QUEUE,
@@ -58,9 +59,14 @@ export class UserWalletProcessor extends WorkerHost {
     try {
       const walletSetId = this.circle.walletSetId;
 
+      // Map our chain id → Circle's blockchain identifier. They coincide
+      // for Base Sepolia but diverge for other chains, so always resolve
+      // via the registry rather than passing wallet.chain raw.
+      const circleBlockchain = getChain(wallet.chain).circleBlockchain;
+
       const response = await this.circle.client.createWallets({
         accountType: 'SCA',
-        blockchains: [wallet.chain as 'BASE-SEPOLIA'],
+        blockchains: [circleBlockchain as 'BASE-SEPOLIA'],
         count: 1,
         walletSetId,
         idempotencyKey,
