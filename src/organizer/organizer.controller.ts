@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -21,7 +22,9 @@ import { EnablePaystackDto } from './dto/enable-paystack.dto';
 import { QueryOrganizerEventsDto } from './dto/query-organizer-events.dto';
 import { QueryAttendeesDto } from './dto/query-attendees.dto';
 import { UpdateBankDetailsDto } from './dto/update-bank-details.dto';
+import { TicketAdminsDto } from './dto/ticket-admins.dto';
 import { OrganizerService } from './organizer.service';
+import { TicketAdminsService } from './ticket-admins.service';
 
 /**
  * Per-provider fiat enablement endpoints.
@@ -35,7 +38,10 @@ import { OrganizerService } from './organizer.service';
 @ApiBearerAuth()
 @Controller('organizer')
 export class OrganizerController {
-  constructor(private readonly organizer: OrganizerService) {}
+  constructor(
+    private readonly organizer: OrganizerService,
+    private readonly ticketAdmins: TicketAdminsService,
+  ) {}
 
   @Get('events')
   @Roles(UserRole.ORGANIZER)
@@ -103,6 +109,42 @@ export class OrganizerController {
     @Body() dto: UpdateBankDetailsDto,
   ) {
     return this.organizer.updateBankDetails(userId, dto);
+  }
+
+  @Get('events/:id/ticket-admins')
+  @Roles(UserRole.ORGANIZER)
+  @ApiOperation({ summary: 'List active check-in delegates (ticket admins)' })
+  listTicketAdmins(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.ticketAdmins.listAdmins(userId, id);
+  }
+
+  @Post('events/:id/ticket-admins')
+  @Roles(UserRole.ORGANIZER)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Delegate check-in: grant ticket-admin to users',
+  })
+  addTicketAdmins(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: TicketAdminsDto,
+  ) {
+    return this.ticketAdmins.addAdmins(userId, id, dto.userIds);
+  }
+
+  @Delete('events/:id/ticket-admins')
+  @Roles(UserRole.ORGANIZER)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Revoke ticket-admin (check-in) from users' })
+  removeTicketAdmins(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: TicketAdminsDto,
+  ) {
+    return this.ticketAdmins.removeAdmins(userId, id, dto.userIds);
   }
 
   @Post('providers/paystack/enable')
