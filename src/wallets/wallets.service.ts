@@ -5,10 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
 import { UserRole, WalletCreationStatus, WalletType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import {
-  getDefaultChain,
-  listActiveChains,
-} from '../blockchain/chains.config';
+import { getDefaultChain, listActiveChains } from '../blockchain/chains.config';
 import {
   USER_WALLET_JOB,
   USER_WALLET_QUEUE,

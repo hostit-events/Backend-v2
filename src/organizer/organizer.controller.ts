@@ -1,10 +1,13 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
   Param,
+  ParseIntPipe,
+  Patch,
   Post,
   Put,
   Query,
@@ -21,7 +24,12 @@ import { EnablePaystackDto } from './dto/enable-paystack.dto';
 import { QueryOrganizerEventsDto } from './dto/query-organizer-events.dto';
 import { QueryAttendeesDto } from './dto/query-attendees.dto';
 import { UpdateBankDetailsDto } from './dto/update-bank-details.dto';
+import { TicketAdminsDto } from './dto/ticket-admins.dto';
+import { UpdateTicketFeeDto } from './dto/update-ticket-fee.dto';
 import { OrganizerService } from './organizer.service';
+import { TicketAdminsService } from './ticket-admins.service';
+import { TicketFeesService } from './ticket-fees.service';
+import { OnchainReadsService } from './onchain-reads.service';
 
 /**
  * Per-provider fiat enablement endpoints.
@@ -35,7 +43,12 @@ import { OrganizerService } from './organizer.service';
 @ApiBearerAuth()
 @Controller('organizer')
 export class OrganizerController {
-  constructor(private readonly organizer: OrganizerService) {}
+  constructor(
+    private readonly organizer: OrganizerService,
+    private readonly ticketAdmins: TicketAdminsService,
+    private readonly ticketFees: TicketFeesService,
+    private readonly onchainReads: OnchainReadsService,
+  ) {}
 
   @Get('events')
   @Roles(UserRole.ORGANIZER)
@@ -103,6 +116,89 @@ export class OrganizerController {
     @Body() dto: UpdateBankDetailsDto,
   ) {
     return this.organizer.updateBankDetails(userId, dto);
+  }
+
+  @Get('events/:id/ticket-admins')
+  @Roles(UserRole.ORGANIZER)
+  @ApiOperation({ summary: 'List active check-in delegates (ticket admins)' })
+  listTicketAdmins(@Param('id') id: string, @CurrentUser('id') userId: string) {
+    return this.ticketAdmins.listAdmins(userId, id);
+  }
+
+  @Post('events/:id/ticket-admins')
+  @Roles(UserRole.ORGANIZER)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Delegate check-in: grant ticket-admin to users',
+  })
+  addTicketAdmins(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: TicketAdminsDto,
+  ) {
+    return this.ticketAdmins.addAdmins(userId, id, dto.userIds);
+  }
+
+  @Delete('events/:id/ticket-admins')
+  @Roles(UserRole.ORGANIZER)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Revoke ticket-admin (check-in) from users' })
+  removeTicketAdmins(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: TicketAdminsDto,
+  ) {
+    return this.ticketAdmins.removeAdmins(userId, id, dto.userIds);
+  }
+
+  @Patch('events/:id/tickets/:ticketTypeId/fee')
+  @Roles(UserRole.ORGANIZER)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Update a ticket price (on-chain fee) after publish',
+  })
+  updateTicketFee(
+    @Param('id') id: string,
+    @Param('ticketTypeId') ticketTypeId: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: UpdateTicketFeeDto,
+  ) {
+    return this.ticketFees.updateFee(userId, id, ticketTypeId, dto.priceNgn);
+  }
+
+  @Get('events/:id/onchain/balance')
+  @Roles(UserRole.ORGANIZER)
+  @ApiOperation({
+    summary: 'On-chain claimable/escrow USDC balance per ticket type',
+  })
+  getOnchainBalance(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.onchainReads.getBalances(userId, id);
+  }
+
+  @Get('events/:id/onchain/checkins')
+  @Roles(UserRole.ORGANIZER)
+  @ApiOperation({ summary: 'On-chain check-in totals per ticket type' })
+  getOnchainCheckins(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.onchainReads.getCheckins(userId, id);
+  }
+
+  @Get('events/:id/onchain/checkins/day/:day')
+  @Roles(UserRole.ORGANIZER)
+  @ApiOperation({
+    summary: 'On-chain check-in counts for a specific event day (0-based)',
+  })
+  getOnchainCheckinsForDay(
+    @Param('id') id: string,
+    @Param('day', ParseIntPipe) day: number,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.onchainReads.getCheckinsForDay(userId, id, day);
   }
 
   @Post('providers/paystack/enable')

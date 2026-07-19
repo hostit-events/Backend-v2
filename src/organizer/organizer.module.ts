@@ -1,8 +1,13 @@
 import { Module } from '@nestjs/common';
 import { PaymentsModule } from '../payments/payments.module';
 import { PaystackModule } from '../paystack/paystack.module';
+import { BlockchainModule } from '../blockchain/blockchain.module';
+import { WalletsModule } from '../wallets/wallets.module';
 import { OrganizerController } from './organizer.controller';
 import { OrganizerService } from './organizer.service';
+import { TicketAdminsService } from './ticket-admins.service';
+import { TicketFeesService } from './ticket-fees.service';
+import { OnchainReadsService } from './onchain-reads.service';
 
 /**
  * Organizer-side post-onboarding flows. The role flip itself stays in
@@ -11,9 +16,14 @@ import { OrganizerService } from './organizer.service';
  * enablement, with Stripe/Flutterwave/etc. landing here when added.
  */
 @Module({
-  imports: [PaystackModule, PaymentsModule],
+  imports: [PaystackModule, PaymentsModule, BlockchainModule, WalletsModule],
   controllers: [OrganizerController],
-  providers: [OrganizerService],
+  providers: [
+    OrganizerService,
+    TicketAdminsService,
+    TicketFeesService,
+    OnchainReadsService,
+  ],
   exports: [OrganizerService],
 })
 export class OrganizerModule {}
