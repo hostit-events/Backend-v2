@@ -130,6 +130,34 @@ export class BlockchainReadService {
     ) as Promise<string>;
   }
 
+  /** Organizer's claimable/escrow balance for a ticket, in fee-token base units. */
+  async getTicketBalance(
+    chain: string,
+    ticketId: bigint,
+    feeType: number,
+  ): Promise<bigint> {
+    return this.getDiamond(chain).getTicketBalance(
+      ticketId,
+      feeType,
+    ) as Promise<bigint>;
+  }
+
+  /** Addresses checked in for a ticket (all days). Count = length. */
+  async getCheckedIn(chain: string, ticketId: bigint): Promise<string[]> {
+    const r = await this.getDiamond(chain).getCheckedIn(ticketId);
+    return Array.from(r as Iterable<string>);
+  }
+
+  /** Addresses checked in for a ticket on a specific event day (0-based). */
+  async getCheckedInForDay(
+    chain: string,
+    ticketId: bigint,
+    day: number,
+  ): Promise<string[]> {
+    const r = await this.getDiamond(chain).getCheckedInForDay(ticketId, day);
+    return Array.from(r as Iterable<string>);
+  }
+
   async isCheckedIn(
     chain: string,
     ticketId: bigint,

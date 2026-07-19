@@ -7,6 +7,7 @@ import { OrganizerController } from './organizer.controller';
 import { OrganizerService } from './organizer.service';
 import { TicketAdminsService } from './ticket-admins.service';
 import { TicketFeesService } from './ticket-fees.service';
+import { OnchainReadsService } from './onchain-reads.service';
 
 /**
  * Organizer-side post-onboarding flows. The role flip itself stays in
@@ -17,7 +18,12 @@ import { TicketFeesService } from './ticket-fees.service';
 @Module({
   imports: [PaystackModule, PaymentsModule, BlockchainModule, WalletsModule],
   controllers: [OrganizerController],
-  providers: [OrganizerService, TicketAdminsService, TicketFeesService],
+  providers: [
+    OrganizerService,
+    TicketAdminsService,
+    TicketFeesService,
+    OnchainReadsService,
+  ],
   exports: [OrganizerService],
 })
 export class OrganizerModule {}

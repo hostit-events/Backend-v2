@@ -6,6 +6,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  ParseIntPipe,
   Patch,
   Post,
   Put,
@@ -28,6 +29,7 @@ import { UpdateTicketFeeDto } from './dto/update-ticket-fee.dto';
 import { OrganizerService } from './organizer.service';
 import { TicketAdminsService } from './ticket-admins.service';
 import { TicketFeesService } from './ticket-fees.service';
+import { OnchainReadsService } from './onchain-reads.service';
 
 /**
  * Per-provider fiat enablement endpoints.
@@ -45,6 +47,7 @@ export class OrganizerController {
     private readonly organizer: OrganizerService,
     private readonly ticketAdmins: TicketAdminsService,
     private readonly ticketFees: TicketFeesService,
+    private readonly onchainReads: OnchainReadsService,
   ) {}
 
   @Get('events')
@@ -164,6 +167,41 @@ export class OrganizerController {
     @Body() dto: UpdateTicketFeeDto,
   ) {
     return this.ticketFees.updateFee(userId, id, ticketTypeId, dto.priceNgn);
+  }
+
+  @Get('events/:id/onchain/balance')
+  @Roles(UserRole.ORGANIZER)
+  @ApiOperation({
+    summary: 'On-chain claimable/escrow USDC balance per ticket type',
+  })
+  getOnchainBalance(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.onchainReads.getBalances(userId, id);
+  }
+
+  @Get('events/:id/onchain/checkins')
+  @Roles(UserRole.ORGANIZER)
+  @ApiOperation({ summary: 'On-chain check-in totals per ticket type' })
+  getOnchainCheckins(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.onchainReads.getCheckins(userId, id);
+  }
+
+  @Get('events/:id/onchain/checkins/day/:day')
+  @Roles(UserRole.ORGANIZER)
+  @ApiOperation({
+    summary: 'On-chain check-in counts for a specific event day (0-based)',
+  })
+  getOnchainCheckinsForDay(
+    @Param('id') id: string,
+    @Param('day', ParseIntPipe) day: number,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.onchainReads.getCheckinsForDay(userId, id, day);
   }
 
   @Post('providers/paystack/enable')
