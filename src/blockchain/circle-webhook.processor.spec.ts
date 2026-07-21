@@ -44,6 +44,7 @@ function setup(opts: {
   const reconcile = jest.fn().mockResolvedValue(undefined);
   const finalize = jest.fn().mockResolvedValue(true);
   const refundFinalize = jest.fn().mockResolvedValue(true);
+  const payoutFinalize = jest.fn().mockResolvedValue(undefined);
   const enqueueMint = jest.fn().mockResolvedValue(undefined);
 
   const findDeposit = jest.fn().mockResolvedValue(opts.deposit ?? null);
@@ -70,6 +71,7 @@ function setup(opts: {
     { reconcile } as never,
     { finalize } as never,
     { finalize: refundFinalize } as never,
+    { finalize: payoutFinalize } as never,
     { enqueueMint } as never,
   );
 
@@ -81,6 +83,7 @@ function setup(opts: {
     reconcile,
     finalize,
     refundFinalize,
+    payoutFinalize,
     enqueueMint,
     findDeposit,
     updateDeposit,
