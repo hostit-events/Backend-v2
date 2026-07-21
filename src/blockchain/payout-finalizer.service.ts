@@ -1,8 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { PayoutStatus } from '@prisma/client';
 import { Interface, type LogDescription } from 'ethers';
+import { PrismaService } from '../prisma/prisma.service';
 import { diamondAbi } from './abis';
 import { BlockchainReadService } from './blockchain-read.service';
-import { USDC_DECIMALS } from './onchain-fees';
+import { FEE_TYPE_USDC, USDC_DECIMALS } from './onchain-fees';
 
 /** Format a 6-dp USDC base-unit amount as a decimal string, for logs. */
 function formatUsdc(raw: bigint): string {
@@ -21,19 +23,21 @@ function formatUsdc(raw: bigint): string {
  *  - the Circle webhook handler, authoritative once
  *    `circle.webhooksEnabled` is on.
  *
- * This slice keeps no per-payout domain row (the Payout record lifecycle
- * belongs to the #46 request/history work); the BlockchainTransaction —
- * reconciled to CONFIRMED with its txHash — is the source of truth, and
- * this hook is the seam #46 will extend to flip Payout rows to COMPLETED.
- * It performs no mutation, so it is naturally idempotent under webhook
- * re-delivery / poll races.
+ * A payout request (#46) may fan out several per-ticket-type withdraws.
+ * Each confirmed withdraw drives this hook; once the event's remaining
+ * escrow across all ticket types hits zero, the event's active Payout
+ * row is closed to COMPLETED. The compare-and-set on status makes it
+ * idempotent under webhook re-delivery / poll races.
  */
 @Injectable()
 export class PayoutFinalizerService {
   private readonly logger = new Logger(PayoutFinalizerService.name);
   private readonly iface = new Interface(diamondAbi);
 
-  constructor(private readonly read: BlockchainReadService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly read: BlockchainReadService,
+  ) {}
 
   async finalize(
     input: { eventId: string; chain: string },
@@ -41,22 +45,85 @@ export class PayoutFinalizerService {
   ): Promise<void> {
     const withdrawn = await this.extractWithdrawn(input.chain, txHash);
 
-    if (!withdrawn) {
+    if (withdrawn) {
+      this.logger.log(
+        `Payout settled (event=${input.eventId}, ticketId=${withdrawn.ticketId}, ` +
+          `amount=${formatUsdc(withdrawn.fee)} USDC, to=${withdrawn.to}, txHash=${txHash})`,
+      );
+    } else {
       // Confirmed on-chain but no TicketBalanceWithdrawn in the receipt —
       // treat as a zero/no-op withdraw rather than failing the payout.
       this.logger.log(
         `Payout confirmed with no TicketBalanceWithdrawn event (event=${input.eventId}, txHash=${txHash}) — nothing withdrawn`,
       );
-      return;
     }
 
-    this.logger.log(
-      `Payout settled (event=${input.eventId}, ticketId=${withdrawn.ticketId}, ` +
-        `amount=${formatUsdc(withdrawn.fee)} USDC, to=${withdrawn.to}, txHash=${txHash})`,
-    );
+    await this.maybeCompletePayout(input.eventId, input.chain, txHash);
   }
 
   // ---------- internals ----------
+
+  /**
+   * Close the event's active Payout once its escrow is fully drained.
+   * No-op when the event has no in-flight payout (e.g. a withdraw
+   * triggered outside the #46 request flow) or escrow remains.
+   */
+  private async maybeCompletePayout(
+    eventId: string,
+    chain: string,
+    txHash: string,
+  ): Promise<void> {
+    const payout = await this.prisma.payout.findFirst({
+      where: {
+        eventId,
+        status: { in: [PayoutStatus.PENDING, PayoutStatus.PROCESSING] },
+      },
+      select: { id: true },
+    });
+    if (!payout) return;
+
+    const ticketTypes = await this.prisma.ticketType.findMany({
+      where: { eventId, onChainTicketId: { not: null } },
+      select: { onChainTicketId: true },
+    });
+
+    let remaining = 0n;
+    for (const t of ticketTypes) {
+      if (t.onChainTicketId === null) continue;
+      remaining += await this.read.getTicketBalance(
+        chain,
+        t.onChainTicketId,
+        FEE_TYPE_USDC,
+      );
+    }
+
+    if (remaining > 0n) {
+      this.logger.log(
+        `Payout ${payout.id} still has ${formatUsdc(remaining)} USDC escrow outstanding — leaving PROCESSING`,
+      );
+      return;
+    }
+
+    // Compare-and-set: a concurrent finalizer that already closed the
+    // row updates zero rows and we skip.
+    const { count } = await this.prisma.payout.updateMany({
+      where: {
+        id: payout.id,
+        status: { in: [PayoutStatus.PENDING, PayoutStatus.PROCESSING] },
+      },
+      data: {
+        status: PayoutStatus.COMPLETED,
+        processedAt: new Date(),
+        providerReference: txHash,
+      },
+    });
+
+    if (count > 0) {
+      this.logger.log(
+        `Payout ${payout.id} completed (event=${eventId}, txHash=${txHash})`,
+      );
+    }
+  }
 
   private async extractWithdrawn(
     chain: string,

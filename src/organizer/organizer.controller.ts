@@ -23,10 +23,13 @@ import { EnableMonnifyDto } from './dto/enable-monnify.dto';
 import { EnablePaystackDto } from './dto/enable-paystack.dto';
 import { QueryOrganizerEventsDto } from './dto/query-organizer-events.dto';
 import { QueryAttendeesDto } from './dto/query-attendees.dto';
+import { QueryPayoutsDto } from './dto/query-payouts.dto';
+import { RequestPayoutDto } from './dto/request-payout.dto';
 import { UpdateBankDetailsDto } from './dto/update-bank-details.dto';
 import { TicketAdminsDto } from './dto/ticket-admins.dto';
 import { UpdateTicketFeeDto } from './dto/update-ticket-fee.dto';
 import { OrganizerService } from './organizer.service';
+import { PayoutsService } from './payouts.service';
 import { TicketAdminsService } from './ticket-admins.service';
 import { TicketFeesService } from './ticket-fees.service';
 import { OnchainReadsService } from './onchain-reads.service';
@@ -45,6 +48,7 @@ import { OnchainReadsService } from './onchain-reads.service';
 export class OrganizerController {
   constructor(
     private readonly organizer: OrganizerService,
+    private readonly payouts: PayoutsService,
     private readonly ticketAdmins: TicketAdminsService,
     private readonly ticketFees: TicketFeesService,
     private readonly onchainReads: OnchainReadsService,
@@ -199,6 +203,29 @@ export class OrganizerController {
     @CurrentUser('id') userId: string,
   ) {
     return this.onchainReads.getCheckinsForDay(userId, id, day);
+  }
+
+  @Post('payouts/request')
+  @Roles(UserRole.ORGANIZER)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Request an event payout (withdraw on-chain USDC escrow)',
+  })
+  requestPayout(
+    @CurrentUser('id') userId: string,
+    @Body() dto: RequestPayoutDto,
+  ) {
+    return this.payouts.requestPayout(userId, dto.eventId);
+  }
+
+  @Get('payouts')
+  @Roles(UserRole.ORGANIZER)
+  @ApiOperation({ summary: 'Payout history with summary (filter, paginate)' })
+  getPayouts(
+    @CurrentUser('id') userId: string,
+    @Query() query: QueryPayoutsDto,
+  ) {
+    return this.payouts.getPayoutHistory(userId, query);
   }
 
   @Post('providers/paystack/enable')

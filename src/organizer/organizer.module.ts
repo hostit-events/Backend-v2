@@ -5,6 +5,7 @@ import { BlockchainModule } from '../blockchain/blockchain.module';
 import { WalletsModule } from '../wallets/wallets.module';
 import { OrganizerController } from './organizer.controller';
 import { OrganizerService } from './organizer.service';
+import { PayoutsService } from './payouts.service';
 import { TicketAdminsService } from './ticket-admins.service';
 import { TicketFeesService } from './ticket-fees.service';
 import { OnchainReadsService } from './onchain-reads.service';
@@ -20,6 +21,7 @@ import { OnchainReadsService } from './onchain-reads.service';
   controllers: [OrganizerController],
   providers: [
     OrganizerService,
+    PayoutsService,
     TicketAdminsService,
     TicketFeesService,
     OnchainReadsService,
