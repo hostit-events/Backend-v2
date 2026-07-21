@@ -17,6 +17,12 @@ import { EventPublishProcessor } from './event-publish.processor';
 import { MintFinalizerService } from './mint-finalizer.service';
 import { MintQueueService, TICKET_MINT_QUEUE } from './mint-queue.service';
 import { MintTicketProcessor } from './mint-ticket.processor';
+import { RefundFinalizerService } from './refund-finalizer.service';
+import { RefundProcessor } from './refund.processor';
+import {
+  RefundQueueService,
+  TICKET_REFUND_QUEUE,
+} from './refund-queue.service';
 import { TicketCheckinProcessor } from './ticket-checkin.processor';
 
 /**
@@ -49,6 +55,9 @@ import { TicketCheckinProcessor } from './ticket-checkin.processor';
     BullModule.registerQueue({ name: 'event-publish' }),
     BullModule.registerQueue({ name: TICKET_MINT_QUEUE }),
     BullModule.registerQueue({ name: TICKET_CHECKIN_QUEUE }),
+    // Consumer side of the refund queue; EventsModule registers the
+    // producer side. registerQueue is idempotent across modules.
+    BullModule.registerQueue({ name: TICKET_REFUND_QUEUE }),
     // Consumer side of the Circle webhook queue. The WebhooksModule
     // registers the producer side; registerQueue is idempotent.
     BullModule.registerQueue({ name: CIRCLE_WEBHOOK_QUEUE }),
@@ -61,6 +70,9 @@ import { TicketCheckinProcessor } from './ticket-checkin.processor';
     MintFinalizerService,
     MintQueueService,
     MintTicketProcessor,
+    RefundFinalizerService,
+    RefundQueueService,
+    RefundProcessor,
     CheckinQueueService,
     TicketCheckinProcessor,
     CircleWebhookProcessor,
@@ -71,6 +83,7 @@ import { TicketCheckinProcessor } from './ticket-checkin.processor';
     CircleContractService,
     MintFinalizerService,
     MintQueueService,
+    RefundQueueService,
     CheckinQueueService,
   ],
 })

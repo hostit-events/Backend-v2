@@ -11,6 +11,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CircleContractService } from './circle-contract.service';
 import { MintFinalizerService } from './mint-finalizer.service';
 import { MintQueueService } from './mint-queue.service';
+import { RefundFinalizerService } from './refund-finalizer.service';
 import {
   CIRCLE_WEBHOOK_JOB,
   CIRCLE_WEBHOOK_QUEUE,
@@ -59,6 +60,7 @@ export class CircleWebhookProcessor extends WorkerHost {
     private readonly prisma: PrismaService,
     private readonly circle: CircleContractService,
     private readonly finalizer: MintFinalizerService,
+    private readonly refundFinalizer: RefundFinalizerService,
     private readonly mintQueue: MintQueueService,
   ) {
     super();
@@ -265,6 +267,13 @@ export class CircleWebhookProcessor extends WorkerHost {
           );
         }
         await this.finalizer.finalize(bt.ticketId, tx.txHash);
+      } else if (bt.type === BlockchainTxType.REFUND && bt.ticketId) {
+        if (!tx.txHash) {
+          throw new Error(
+            `Confirmed refund webhook for ${circleTxId} has no txHash`,
+          );
+        }
+        await this.refundFinalizer.finalize(bt.ticketId, tx.txHash);
       } else if (bt.type === BlockchainTxType.CHECKIN) {
         // The door already flipped the ticket to USED (#24); the
         // confirmed CHECKIN tx is the on-chain audit record, now

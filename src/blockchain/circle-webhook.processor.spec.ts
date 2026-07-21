@@ -43,6 +43,7 @@ function setup(opts: {
   const findBt = jest.fn().mockResolvedValue(opts.bt ?? null);
   const reconcile = jest.fn().mockResolvedValue(undefined);
   const finalize = jest.fn().mockResolvedValue(true);
+  const refundFinalize = jest.fn().mockResolvedValue(true);
   const enqueueMint = jest.fn().mockResolvedValue(undefined);
 
   const findDeposit = jest.fn().mockResolvedValue(opts.deposit ?? null);
@@ -68,6 +69,7 @@ function setup(opts: {
     prisma as never,
     { reconcile } as never,
     { finalize } as never,
+    { finalize: refundFinalize } as never,
     { enqueueMint } as never,
   );
 
@@ -78,6 +80,7 @@ function setup(opts: {
     findBt,
     reconcile,
     finalize,
+    refundFinalize,
     enqueueMint,
     findDeposit,
     updateDeposit,
