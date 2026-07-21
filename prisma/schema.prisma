@@ -72,6 +72,7 @@ enum BlockchainTxType {
   WITHDRAW
   SET_FEES
   SET_ADMINS
+  REFUND
 }
 
 enum TicketAdminStatus {
@@ -339,6 +340,8 @@ model Ticket {
   status          TicketStatus    @default(PENDING)
   deliveryChannel DeliveryChannel @map("delivery_channel")
   checkedInAt     DateTime?       @map("checked_in_at")
+  refundedAt      DateTime?       @map("refunded_at")
+  refundTxHash    String?         @map("refund_tx_hash")
   createdAt       DateTime        @default(now()) @map("created_at")
   updatedAt       DateTime        @updatedAt @map("updated_at")
 

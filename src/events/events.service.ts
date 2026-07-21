@@ -17,8 +17,11 @@ import {
   EventStatus,
   BlockchainTxType,
   BlockchainTxStatus,
+  PaymentProvider,
+  TicketStatus,
   Prisma,
 } from '@prisma/client';
+import { RefundQueueService } from '../blockchain/refund-queue.service';
 import * as crypto from 'crypto';
 import {
   computeUsdcFees,
@@ -39,6 +42,7 @@ export class EventsService {
     @InjectQueue('event-publish') private readonly eventPublishQueue: Queue,
     private readonly notifications: NotificationsService,
     private readonly configService: ConfigService,
+    private readonly refundQueue: RefundQueueService,
   ) {}
 
   /**
@@ -722,10 +726,34 @@ export class EventsService {
       });
     }
 
-    // TODO: If tickets sold and refundable, queue refund processing (Phase 4/5)
+    // Fan out refunds for sold tickets. Only crypto (USDC) tickets can be
+    // refunded on-chain via claimRefund — fiat tickets revert
+    // FiatTicketNotRefundable and are settled off-chain (out of scope
+    // here). We enqueue one refund job per confirmed, minted crypto
+    // ticket; the RefundProcessor honors the contract's refund-window
+    // rules and marks jobs failed (for auditor review) when a refund is
+    // no longer permitted.
     if (totalSold > 0) {
-      this.logger.warn(
-        `Cancelled event ${eventId} has ${totalSold} sold tickets — refunds pending`,
+      const refundable = await this.prisma.ticket.findMany({
+        where: {
+          eventId,
+          status: TicketStatus.CONFIRMED,
+          tokenId: { not: null },
+          transaction: { provider: PaymentProvider.CRYPTO },
+        },
+        select: { id: true },
+      });
+
+      for (const ticket of refundable) {
+        await this.refundQueue.enqueueRefund(ticket.id, eventId);
+      }
+
+      const fiatPending = totalSold - refundable.length;
+      this.logger.log(
+        `Cancelled event ${eventId}: queued ${refundable.length} on-chain refund(s)` +
+          (fiatPending > 0
+            ? `; ${fiatPending} non-crypto ticket(s) require off-chain refund handling`
+            : ''),
       );
     }
 
