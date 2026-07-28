@@ -20,6 +20,7 @@ import { PaystackService } from '../paystack/paystack.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { EnableMonnifyDto } from './dto/enable-monnify.dto';
 import { EnablePaystackDto } from './dto/enable-paystack.dto';
+import { LookupUserDto } from './dto/lookup-user.dto';
 import { QueryOrganizerEventsDto } from './dto/query-organizer-events.dto';
 import { QueryAttendeesDto } from './dto/query-attendees.dto';
 import { UpdateBankDetailsDto } from './dto/update-bank-details.dto';
@@ -84,6 +85,63 @@ export class OrganizerService {
     private readonly paystack: PaystackService,
     private readonly monnify: MonnifyProvider,
   ) {}
+
+  /**
+   * Resolve a teammate for the Check-in team screen (#101). Feeds
+   * `POST /organizer/events/:id/ticket-admins`, which takes userIds —
+   * organizers only know a teammate's email.
+   *
+   * With `email`: exact, case-insensitive, trimmed match → the single
+   * user (404 if none). With `q`: a small prefix/substring list across
+   * email + name for type-ahead. Returns only id/name/email — no
+   * wallets, phone, or role.
+   */
+  async lookupUsers(dto: LookupUserDto) {
+    const email = dto.email?.trim();
+    const q = dto.q?.trim();
+
+    if (email) {
+      const user = await this.prisma.user.findFirst({
+        where: { email: { equals: email, mode: 'insensitive' } },
+        select: { id: true, firstName: true, lastName: true, email: true },
+      });
+      if (!user) {
+        throw new NotFoundException('No HostIT account for that email');
+      }
+      return this.toLookupDto(user);
+    }
+
+    if (q) {
+      const users = await this.prisma.user.findMany({
+        where: {
+          OR: [
+            { email: { contains: q, mode: 'insensitive' } },
+            { firstName: { contains: q, mode: 'insensitive' } },
+            { lastName: { contains: q, mode: 'insensitive' } },
+          ],
+        },
+        select: { id: true, firstName: true, lastName: true, email: true },
+        orderBy: { email: 'asc' },
+        take: 10,
+      });
+      return users.map((u) => this.toLookupDto(u));
+    }
+
+    throw new BadRequestException('Provide an email or q query parameter');
+  }
+
+  private toLookupDto(u: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+  }) {
+    return {
+      id: u.id,
+      name: `${u.firstName} ${u.lastName}`.trim(),
+      email: u.email,
+    };
+  }
 
   /**
    * Organizer dashboard landing: the caller's events with per-event and

@@ -700,3 +700,77 @@ describe('OrganizerService.updateBankDetails', () => {
     expect(res.bankName).toBe('Old Bank');
   });
 });
+
+describe('OrganizerService.lookupUsers', () => {
+  function lookupSvc(opts: { found?: unknown; list?: unknown[] } = {}) {
+    const findFirst = jest.fn().mockResolvedValue(
+      opts.found === undefined
+        ? {
+            id: 'u-1',
+            firstName: 'Jane',
+            lastName: 'Doe',
+            email: 'jane@x.com',
+          }
+        : opts.found,
+    );
+    const findMany = jest.fn().mockResolvedValue(opts.list ?? []);
+    const prisma = {
+      user: { findFirst, findMany },
+    } as unknown as PrismaService;
+
+    const svc = new OrganizerService(
+      prisma,
+      { get: () => undefined } as unknown as ConfigService,
+      {} as unknown as PaystackService,
+      {} as unknown as MonnifyProvider,
+    );
+    return { svc, findFirst, findMany };
+  }
+
+  it('resolves an exact email (case-insensitive, trimmed) to id/name/email', async () => {
+    const { svc, findFirst } = lookupSvc();
+
+    const res = await svc.lookupUsers({ email: '  Jane@X.com ' });
+
+    expect(findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { email: { equals: 'Jane@X.com', mode: 'insensitive' } },
+      }),
+    );
+    expect(res).toEqual({ id: 'u-1', name: 'Jane Doe', email: 'jane@x.com' });
+  });
+
+  it('404s when no user has that email', async () => {
+    const { svc } = lookupSvc({ found: null });
+    await expect(
+      svc.lookupUsers({ email: 'nobody@x.com' }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('returns a capped list for a prefix query', async () => {
+    const { svc, findMany } = lookupSvc({
+      list: [
+        {
+          id: 'u-2',
+          firstName: 'Jan',
+          lastName: 'Kowalski',
+          email: 'jan@x.com',
+        },
+      ],
+    });
+
+    const res = await svc.lookupUsers({ q: 'jan' });
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ take: 10 }),
+    );
+    expect(res).toEqual([
+      { id: 'u-2', name: 'Jan Kowalski', email: 'jan@x.com' },
+    ]);
+  });
+
+  it('rejects when neither email nor q is provided', async () => {
+    const { svc } = lookupSvc();
+    await expect(svc.lookupUsers({})).rejects.toThrow(/email or q/);
+  });
+});

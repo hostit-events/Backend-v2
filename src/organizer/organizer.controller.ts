@@ -21,6 +21,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { SkipTransform } from '../common/decorators/skip-transform.decorator';
 import { EnableMonnifyDto } from './dto/enable-monnify.dto';
 import { EnablePaystackDto } from './dto/enable-paystack.dto';
+import { LookupUserDto } from './dto/lookup-user.dto';
 import { QueryOrganizerEventsDto } from './dto/query-organizer-events.dto';
 import { QueryAttendeesDto } from './dto/query-attendees.dto';
 import { QueryPayoutsDto } from './dto/query-payouts.dto';
@@ -120,6 +121,15 @@ export class OrganizerController {
     @Body() dto: UpdateBankDetailsDto,
   ) {
     return this.organizer.updateBankDetails(userId, dto);
+  }
+
+  @Get('users/lookup')
+  @Roles(UserRole.ORGANIZER)
+  @ApiOperation({
+    summary: 'Resolve a teammate by email (or prefix) for the check-in team',
+  })
+  lookupUsers(@Query() query: LookupUserDto) {
+    return this.organizer.lookupUsers(query);
   }
 
   @Get('events/:id/ticket-admins')
