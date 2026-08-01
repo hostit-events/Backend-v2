@@ -110,6 +110,13 @@ export const envValidationSchema = Joi.object({
   APP_URL: Joi.string().uri().optional(),
   SUPPORT_EMAIL: Joi.string().email().optional(),
 
+  // Where the payment gateway redirects the buyer after checkout.
+  // Optional here rather than required because the fail-fast lives in
+  // TicketsService, which can report the far more useful "fiat checkout
+  // is misconfigured" instead of a generic Joi error — and because on
+  // Render it resolves automatically from RENDER_EXTERNAL_URL.
+  PAYMENT_CALLBACK_URL: Joi.string().uri().optional(),
+
   // Twilio
   TWILIO_ACCOUNT_SID: Joi.string().required(),
   TWILIO_AUTH_TOKEN: Joi.string().required(),

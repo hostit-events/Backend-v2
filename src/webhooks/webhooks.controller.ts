@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
+import * as crypto from 'crypto';
 import { ApiExcludeController } from '@nestjs/swagger';
 import { PaymentProvider, Prisma, WebhookSource } from '@prisma/client';
 import { Queue } from 'bullmq';
@@ -85,6 +86,14 @@ export class WebhooksController {
 
     const event = body.event;
     const data = body.data;
+
+    await this.recordWebhook(
+      WebhookSource.PAYSTACK,
+      raw,
+      event,
+      body as unknown as Prisma.InputJsonValue,
+    );
+
     if (!data?.reference) return { received: true };
 
     if (event === 'charge.success') {
@@ -145,6 +154,14 @@ export class WebhooksController {
 
     const eventType = body.eventType;
     const data = body.eventData;
+
+    await this.recordWebhook(
+      WebhookSource.MONNIFY,
+      raw,
+      eventType,
+      body as unknown as Prisma.InputJsonValue,
+    );
+
     if (!data?.paymentReference) return { received: true };
 
     if (eventType === 'SUCCESSFUL_TRANSACTION') {
@@ -259,5 +276,64 @@ export class WebhooksController {
     );
 
     return { received: true };
+  }
+
+  /**
+   * Persist an accepted (signature-verified) Paystack/Monnify webhook to
+   * `webhook_events` for forensics.
+   *
+   * This exists because fiat webhooks previously left no trace at all —
+   * only the Circle handler wrote audit rows. When settlement silently
+   * stopped working there was no way to tell "the webhook arrived and
+   * failed" from "the webhook never arrived", which is exactly the
+   * question that mattered.
+   *
+   * Two deliberate differences from the Circle handler:
+   *
+   * 1. The dedup key is a hash of the raw body, not a provider event id.
+   *    Neither provider sends a reliable per-delivery id, and retries are
+   *    byte-identical, so content-addressing is the correct key.
+   * 2. A duplicate does NOT short-circuit processing. Circle can bail
+   *    early because its work is queued and retried independently; these
+   *    handlers settle synchronously, so dropping a retry would strand a
+   *    payment whose first delivery failed. `handleSuccess`/`handleFailure`
+   *    are already idempotent, so re-processing is safe.
+   *
+   * Never throws — an audit write must not be able to reject a webhook
+   * and trigger provider retries for a payment we actually handled.
+   */
+  private async recordWebhook(
+    source: WebhookSource,
+    raw: Buffer,
+    type: string | undefined,
+    payload: Prisma.InputJsonValue,
+  ): Promise<void> {
+    const digest = crypto.createHash('sha256').update(raw).digest('hex');
+    try {
+      await this.prisma.webhookEvent.create({
+        data: {
+          source,
+          notificationId: digest,
+          type: type ?? null,
+          payload,
+          signatureValid: true,
+          processedAt: new Date(),
+        },
+        select: { id: true },
+      });
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        this.logger.log(
+          `${source} webhook: redelivery of ${digest.slice(0, 12)} — processing anyway`,
+        );
+        return;
+      }
+      this.logger.error(
+        `${source} webhook: failed to write audit row: ${(err as Error).message}`,
+      );
+    }
   }
 }
