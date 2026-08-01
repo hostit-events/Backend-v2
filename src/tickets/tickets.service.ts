@@ -101,11 +101,31 @@ export class TicketsService {
     @Inject(forwardRef(() => MintQueueService))
     private readonly mintQueue: MintQueueService,
   ) {
-    // Where the gateway redirects after checkout. For local dev this
-    // is fine as a relative-ish URL; staging/prod override via env.
+    // Where the gateway redirects the buyer after checkout.
+    //
+    // This previously read a config key that did not exist on the `app`
+    // namespace, so it always resolved to undefined and the hardcoded
+    // localhost fallback always won — in production too. Every fiat
+    // buyer was sent to localhost:3000 after paying, and the payment
+    // was never settled. Fail fast rather than shipping that again.
+    const isProduction =
+      configService.get<string>('app.nodeEnv') === 'production';
+    const callbackUrl = configService.get<string>('app.paymentCallbackUrl');
+    if (!callbackUrl) {
+      if (isProduction) {
+        throw new Error(
+          'PAYMENT_CALLBACK_URL (or RENDER_EXTERNAL_URL) must be set in ' +
+            'production — without it buyers are redirected to a dead URL ' +
+            'after paying and the transaction is never settled.',
+        );
+      }
+      this.logger.warn(
+        'PAYMENT_CALLBACK_URL/RENDER_EXTERNAL_URL unset — falling back to ' +
+          'localhost for the post-checkout redirect.',
+      );
+    }
     this.checkoutCallbackUrl =
-      configService.get<string>('app.paymentCallbackUrl') ??
-      'http://localhost:3000/api/payments/callback';
+      callbackUrl || 'http://localhost:3000/api/payments/callback';
   }
 
   /**
